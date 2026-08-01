@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "zstdnetworkproject",
+  "version": "${version}",
+  "name": "ZstdNetworkProject",
+  "description": "AI assisted zstd packet compressor for minecraft client and server.",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/zstdnetworkproject/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "com.rigorberto.zstdnetworkproject.client.ZstdnetworkprojectDataGenerator"
+    ],
+    "client": [
+      "com.rigorberto.zstdnetworkproject.client.ZstdnetworkprojectClient"
+    ],
+    "main": [
+      "com.rigorberto.zstdnetworkproject.Zstdnetworkproject"
+    ]
+  },
+  "mixins": [
+    "zstdnetworkproject.mixins.json",
+    {
+      "config": "zstdnetworkproject.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
