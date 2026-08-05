@@ -1,0 +1,45 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = project.maven_group
+version = project.mod_version
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://maven.neoforged.net/releases/" }
+}
+
+dependencies {
+    implementation project(':common')
+    implementation 'com.github.luben:zstd-jni:1.5.6-4'
+    compileOnly 'io.netty:netty-all:4.2.16.Final'
+    compileOnly "net.neoforged:neoforge:${project.neoforge_version}:userdev"
+    runtimeOnly "net.neoforged:neoforge:${project.neoforge_version}:userdev"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release.set(21)
+}
+
+jar {
+    manifest {
+        attributes(
+            'Mod-Container': 'com.rigorberto.zstdnetworkproject.neoforge.ZstdNetworkProjectNeoForge',
+            'Mod-Version': project.version
+        )
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from('src/main/resources') {
+        include 'META-INF/neoforge.mods.toml'
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "zstdnetworkproject",
+  "name": "ZstdNetworkProject",
+  "version": "1.0-SNAPSHOT",
+  "description": "Zstd packet compressor for Velocity proxy",
+  "authors": ["Rigorberto"],
+  "main": "com.rigorberto.zstdnetworkproject.velocity.ZstdNetworkProjectVelocity",
+  "dependencies": [
+    {
+      "id": "velocity",
+      "version": "3.5.1",
+      "required": true
+    }
+  ]
+}

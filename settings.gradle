@@ -1,9 +1,29 @@
 pluginManagement {
     repositories {
         maven {
-            name = 'Fabric'
-            url = 'https://maven.fabricmc.net/'
+            name = 'Paper'
+            url = 'https://repo.papermc.io/repository/maven-public/'
+        }
+        maven {
+            name = 'Velocity'
+            url = 'https://repo.velocitypowered.com/repository/maven-public/'
+        }
+        maven {
+            name = 'NeoForge'
+            url = 'https://maven.neoforged.net/releases/'
         }
         gradlePluginPortal()
     }
 }
+
+rootProject.name = 'ZstdNetworkProject'
+
+include 'common'
+include 'neoforge'
+include 'paper'
+include 'velocity'
+
+project(':common').projectDir = file('common')
+project(':neoforge').projectDir = file('neoforge')
+project(':paper').projectDir = file('paper')
+project(':velocity').projectDir = file('velocity')

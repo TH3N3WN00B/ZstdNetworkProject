@@ -1,0 +1,18 @@
+modLoader="neoforge"
+license="All-Rights-Reserved"
+
+[[mods]]
+modId="zstdnetworkproject"
+version="${file.jarVersion}"
+displayName="ZstdNetworkProject"
+description="Zstd packet compressor for Minecraft client and server."
+authors="Rigorberto"
+credits="AI assisted"
+displayURL=""
+
+[[dependencies.zstdnetworkproject]]
+modId="neoforge"
+mandatory=true
+versionRange="[21.0,)"
+ordering="NONE"
+side="BOTH"

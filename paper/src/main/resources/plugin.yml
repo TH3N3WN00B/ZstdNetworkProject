@@ -1,0 +1,6 @@
+name: ZstdNetworkProject
+version: 1.0-SNAPSHOT
+main: com.rigorberto.zstdnetworkproject.paper.ZstdNetworkProjectPaper
+api-version: 1.21
+author: Rigorberto
+description: Zstd packet compressor for Minecraft Paper server

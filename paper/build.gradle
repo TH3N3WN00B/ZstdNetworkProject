@@ -1,0 +1,53 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = project.maven_group
+version = project.mod_version
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://repo.papermc.io/repository/maven-public/" }
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'com.google.code.gson:gson:2.10.1'
+        force 'org.slf4j:slf4j-api:2.0.9'
+        force 'org.jetbrains:annotations:24.1.0'
+    }
+}
+
+dependencies {
+    implementation project(':common')
+    implementation 'com.github.luben:zstd-jni:1.5.6-4'
+    compileOnly 'io.netty:netty-all:4.2.16.Final'
+    compileOnly "io.papermc.paper:paper-api:${project.paper_version}"
+    runtimeOnly "io.papermc.paper:paper-api:${project.paper_version}"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release.set(21)
+}
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': 'com.rigorberto.zstdnetworkproject.paper.ZstdNetworkProjectPaper',
+            'Plugin-Version': project.version
+        )
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from('src/main/resources') {
+        include 'plugin.yml'
+    }
+}
