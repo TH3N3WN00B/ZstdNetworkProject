@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "zstdnetworkproject",
+  "version": "${version}",
+  "name": "ZstdNetworkProject",
+  "description": "Zstd packet compressor for Minecraft client and server.",
+  "authors": ["Rigorberto"],
+  "license": "All-Rights-Reserved",
+  "environment": "*",
+  "accessWidener": "zstdnetworkproject.classtweaker",
+  "entrypoints": {
+    "main": [
+      "com.rigorberto.zstdnetworkproject.fabric.ZstdNetworkProjectFabric"
+    ],
+    "client": [
+      "com.rigorberto.zstdnetworkproject.fabric.ZstdFabricClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}

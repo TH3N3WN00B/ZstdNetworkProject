@@ -4,45 +4,52 @@ import com.github.luben.zstd.Zstd;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
+import java.util.concurrent.atomic.LongAdder;
 
 public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
-    private static final int COMPRESSION_LEVEL = 3;
     private static final int COMPRESSION_THRESHOLD = 256;
+
+    public static final LongAdder PACKETS_COMPRESSED = new LongAdder();
+    public static final LongAdder INPUT_BYTES = new LongAdder();
+    public static final LongAdder OUTPUT_BYTES = new LongAdder();
+
+    private final int compressionLevel;
+
+    public ZstdEncoder() {
+        this(3);
+    }
+
+    public ZstdEncoder(int compressionLevel) {
+        this.compressionLevel = compressionLevel;
+    }
 
     @Override
     protected void encode(ChannelHandlerContext ctx, ByteBuf msg, ByteBuf out) {
         int readable = msg.readableBytes();
+        INPUT_BYTES.add(readable);
 
         if (readable < COMPRESSION_THRESHOLD) {
             writeVarInt(out, 0);
             out.writeBytes(msg);
+            OUTPUT_BYTES.add(out.readableBytes());
             return;
         }
 
-        long maxCompressedLength = Zstd.compressBound(readable);
-        out.ensureWritable((int) maxCompressedLength + 5);
+        PACKETS_COMPRESSED.increment();
+
+        byte[] input = new byte[readable];
+        msg.getBytes(msg.readerIndex(), input);
+
+        byte[] compressed = Zstd.compress(input, compressionLevel);
+        int compressedSize = compressed.length;
 
         int varIntStartIndex = out.writerIndex();
         writeVarInt(out, readable);
         int varIntLength = out.writerIndex() - varIntStartIndex;
 
-        int compressedSize;
-        if (msg.hasArray() && out.hasArray()) {
-            compressedSize = (int) Zstd.compressByteArray(
-                    msg.array(), msg.arrayOffset() + msg.readerIndex(), readable,
-                    out.array(), out.arrayOffset() + out.writerIndex(), (int) maxCompressedLength, COMPRESSION_LEVEL
-            );
-        } else {
-            byte[] input = new byte[readable];
-            msg.getBytes(msg.readerIndex(), input);
+        out.writeBytes(compressed);
 
-            byte[] compressed = new byte[(int) maxCompressedLength];
-            compressedSize = (int) Zstd.compressByteArray(input, 0, readable, compressed, 0, (int) maxCompressedLength, COMPRESSION_LEVEL);
-
-            out.writeBytes(compressed, 0, compressedSize);
-        }
-
-        out.writerIndex(out.writerIndex() + compressedSize);
+        OUTPUT_BYTES.add(varIntLength + compressedSize);
     }
 
     public static void writeVarInt(ByteBuf buf, int value) {

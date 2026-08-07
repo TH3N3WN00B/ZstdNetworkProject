@@ -3,16 +3,6 @@ plugins {
     id 'maven-publish'
 }
 
-group = project.maven_group
-version = project.mod_version
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
-    }
-    withSourcesJar()
-}
-
 repositories {
     mavenCentral()
     maven { url = "https://repo.papermc.io/repository/maven-public/" }
@@ -31,18 +21,14 @@ configurations.all {
 
 dependencies {
     implementation project(':common')
-    implementation 'com.github.luben:zstd-jni:1.5.6-4'
-    compileOnly 'io.netty:netty-all:4.2.16.Final'
+    implementation "com.github.luben:zstd-jni:${project.zstd_version}"
+    compileOnly "io.netty:netty-all:${project.netty_version}"
     compileOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
     runtimeOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
 }
 
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release.set(21)
-}
-
 jar {
+    dependsOn project(':common').jar
     manifest {
         attributes(
             'Main-Class': 'com.rigorberto.zstdnetworkproject.velocity.ZstdNetworkProjectVelocity',
@@ -52,5 +38,12 @@ jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from('src/main/resources') {
         include 'velocity-plugin.json'
+    }
+    from {
+        zipTree(project(':common').jar.archiveFile.get()).matching { include 'com/rigorberto/zstdnetworkproject/**' }
+    }
+    from {
+        def zstd = configurations.runtimeClasspath.find { it.name == "zstd-jni-${project.zstd_version}.jar" }
+        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : project.files()
     }
 }

@@ -1,20 +1,37 @@
+def mcVersion = providers.gradleProperty('minecraft_version').getOrElse('1.21.11')
+def era = mcVersion.startsWith('26.') ? 'unobfuscated' : 'obfuscated'
+
+ext {
+    minecraftEra = era
+    javaVersion = era == 'unobfuscated' ? 25 : 21
+}
+
 subprojects {
     apply plugin: 'java-library'
     apply plugin: 'maven-publish'
 
-    group = project.maven_group
-    version = project.mod_version
+    group = rootProject.maven_group
+    version = rootProject.mod_version
+
+    base {
+        archivesName = "zstd-${project.name}"
+    }
+
+    tasks.withType(Jar).configureEach {
+        archiveVersion = "beta-0.1"
+    }
+
+    def projectJavaVersion = (project.findProperty("${project.name}_java_version") ?: rootProject.javaVersion).toInteger()
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(projectJavaVersion)
+        }
+        withSourcesJar()
+    }
 
     tasks.withType(JavaCompile).configureEach {
         options.encoding = "UTF-8"
-        options.release.set(21)
-    }
-}
-
-allprojects {
-    configurations.all {
-        resolutionStrategy {
-            failOnVersionConflict()
-        }
+        options.release.set(projectJavaVersion)
     }
 }

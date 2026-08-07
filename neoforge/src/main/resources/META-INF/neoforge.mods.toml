@@ -16,3 +16,10 @@ mandatory=true
 versionRange="[21.0,)"
 ordering="NONE"
 side="BOTH"
+
+[[dependencies.zstdnetworkproject]]
+modId="javafml"
+mandatory=true
+versionRange="[4,)"
+ordering="NONE"
+side="BOTH"
