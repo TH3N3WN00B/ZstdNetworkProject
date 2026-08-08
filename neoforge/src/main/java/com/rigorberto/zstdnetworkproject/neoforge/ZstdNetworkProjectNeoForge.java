@@ -26,7 +26,7 @@ public class ZstdNetworkProjectNeoForge {
     public ZstdNetworkProjectNeoForge() {
         NeoForge.EVENT_BUS.register(this);
         settings = loadConfig();
-        LOGGER.info("Enabling beta zstd packet compression for NeoForge");
+        LOGGER.info("Enabling alpha zstd packet compression for NeoForge");
         if (FMLLoader.getCurrent().getDist() == Dist.CLIENT) {
             NeoForge.EVENT_BUS.register(new ZstdNeoForgeClient());
         }

@@ -1,0 +1,70 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}" apply false
+}
+
+apply plugin: rootProject.minecraftEra == 'obfuscated' ? 'net.fabricmc.fabric-loom-remap' : 'net.fabricmc.fabric-loom'
+
+['jar', 'remapJar', 'remapSourcesJar', 'sourcesJar'].each { name ->
+    if (tasks.findByName(name) != null) {
+        tasks.named(name).configure { archiveVersion = 'alpha-0.1' }
+    }
+}
+
+jar {
+    dependsOn project(':common').jar
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        zipTree(project(':common').jar.archiveFile.get()).matching { include 'com/rigorberto/zstdnetworkproject/**' }
+    }
+    from {
+        def zstd = configurations.runtimeClasspath.find { it.name == "zstd-jni-${project.zstd_version}.jar" }
+        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : project.files()
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir "src/${rootProject.minecraftEra}/java"
+        }
+        resources {
+            srcDir "src/${rootProject.minecraftEra}/resources"
+        }
+    }
+}
+
+loom {
+    if (rootProject.minecraftEra == 'obfuscated') {
+        accessWidenerPath = file("src/obfuscated/resources/zstdnetworkproject.classtweaker")
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    if (rootProject.minecraftEra == 'obfuscated') {
+        mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+        modImplementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+        modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    } else {
+        implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+        implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    }
+    implementation project(':common')
+    implementation "com.github.luben:zstd-jni:${project.zstd_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "loader_version", project.fabric_loader_version
+    inputs.property "minecraft_version", project.minecraft_version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version, "loader_version": project.fabric_loader_version, "minecraft_version": project.minecraft_version
+    }
+}

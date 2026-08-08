@@ -17,7 +17,7 @@ public class ZstdNetworkProjectFabric implements ModInitializer {
     public void onInitialize() {
         ZstdSettings settings = loadConfig();
         ZstdFabricJoinHook.register(settings);
-        LOGGER.info("Enabling beta zstd packet compression for Fabric");
+        LOGGER.info("Enabling alpha zstd packet compression for Fabric");
     }
 
     private static ZstdSettings loadConfig() {

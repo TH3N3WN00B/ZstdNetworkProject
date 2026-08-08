@@ -79,7 +79,7 @@ public class ZstdNetworkProjectVelocity {
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
         settings = loadConfig();
-        logger.info("Enabling beta zstd packet compression for Velocity");
+        logger.info("Enabling alpha zstd packet compression for Velocity");
     }
 
     private ZstdSettings loadConfig() {

@@ -18,7 +18,7 @@ subprojects {
     }
 
     tasks.withType(Jar).configureEach {
-        archiveVersion = "beta-0.1"
+        archiveVersion = "alpha-0.1"
     }
 
     def projectJavaVersion = (project.findProperty("${project.name}_java_version") ?: rootProject.javaVersion).toInteger()

@@ -22,7 +22,7 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener {
     public void onEnable() {
         settings = loadConfig();
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("Enabling beta zstd packet compression for Paper");
+        getLogger().info("Enabling alpha zstd packet compression for Paper");
     }
 
     private ZstdSettings loadConfig() {
