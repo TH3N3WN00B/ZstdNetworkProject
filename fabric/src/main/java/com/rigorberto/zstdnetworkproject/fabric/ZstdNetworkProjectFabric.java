@@ -1,6 +1,7 @@
 package com.rigorberto.zstdnetworkproject.fabric;
 
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
+import com.rigorberto.zstdnetworkproject.StartupBanner;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
@@ -17,7 +18,7 @@ public class ZstdNetworkProjectFabric implements ModInitializer {
     public void onInitialize() {
         ZstdSettings settings = loadConfig();
         ZstdFabricJoinHook.register(settings);
-        LOGGER.info("Enabling alpha zstd packet compression for Fabric");
+        StartupBanner.print();
     }
 
     private static ZstdSettings loadConfig() {

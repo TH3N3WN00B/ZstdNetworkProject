@@ -2,10 +2,19 @@ package com.rigorberto.zstdnetworkproject;
 
 public final class ZstdSettings {
 
+    /**
+     * Packets at least this large (uncompressed bytes) may be compressed with zstd's multithreaded
+     * mode, which splits the input into jobs processed on multiple CPU cores. Smaller packets are
+     * not worth the threading overhead.
+     */
+    public static final int HARDWARE_ACCEL_MIN_SIZE = 512 * 1024;
+
     private int compressionLevel = 3;
     private boolean fast;
     private int fastLevel = 1;
     private boolean debugMessage = true;
+    private boolean hardwareAcceleration = true;
+    private int hardwareAccelerationThreads;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -41,5 +50,42 @@ public final class ZstdSettings {
 
     public void setDebugMessage(boolean debugMessage) {
         this.debugMessage = debugMessage;
+    }
+
+    public boolean isHardwareAcceleration() {
+        return hardwareAcceleration;
+    }
+
+    public void setHardwareAcceleration(boolean hardwareAcceleration) {
+        this.hardwareAcceleration = hardwareAcceleration;
+    }
+
+    public int getHardwareAccelerationThreads() {
+        return hardwareAccelerationThreads;
+    }
+
+    public void setHardwareAccelerationThreads(int hardwareAccelerationThreads) {
+        this.hardwareAccelerationThreads = hardwareAccelerationThreads;
+    }
+
+    /**
+     * Number of CPU worker threads zstd may spawn for a single compression job. Returns 0 (no
+     * multithreading) when hardware acceleration is disabled or the packet is too small, the
+     * configured thread count when one is set, or an auto-detected value based on the available
+     * processors otherwise.
+     */
+    public int effectiveWorkers(int uncompressedSize) {
+        if (!hardwareAcceleration || uncompressedSize < HARDWARE_ACCEL_MIN_SIZE) {
+            return 0;
+        }
+        if (hardwareAccelerationThreads > 0) {
+            return hardwareAccelerationThreads;
+        }
+        return autoWorkers();
+    }
+
+    private static int autoWorkers() {
+        int cores = Runtime.getRuntime().availableProcessors();
+        return Math.max(1, Math.min(4, cores / 2));
     }
 }

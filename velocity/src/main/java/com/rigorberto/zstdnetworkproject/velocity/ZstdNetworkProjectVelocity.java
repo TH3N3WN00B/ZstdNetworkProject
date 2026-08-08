@@ -4,6 +4,7 @@ import com.google.inject.Inject;
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
+import com.rigorberto.zstdnetworkproject.StartupBanner;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
@@ -79,7 +80,7 @@ public class ZstdNetworkProjectVelocity {
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
         settings = loadConfig();
-        logger.info("Enabling alpha zstd packet compression for Velocity");
+        StartupBanner.print();
     }
 
     private ZstdSettings loadConfig() {

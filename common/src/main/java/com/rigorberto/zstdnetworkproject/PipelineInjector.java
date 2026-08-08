@@ -49,8 +49,8 @@ public final class PipelineInjector {
             if (encoder != null && !expected.isInstance(encoder)) {
                 pipeline.replace(encoderName, encoderName,
                         framedEncoder
-                                ? new ZstdFrameEncoder(settings.effectiveCompressionLevel())
-                                : new ZstdEncoder(settings.effectiveCompressionLevel()));
+                                ? new ZstdFrameEncoder(settings)
+                                : new ZstdEncoder(settings));
                 replaced = true;
             }
         }

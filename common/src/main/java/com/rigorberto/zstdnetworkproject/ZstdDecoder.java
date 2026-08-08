@@ -1,13 +1,24 @@
 package com.rigorberto.zstdnetworkproject;
 
-import com.github.luben.zstd.Zstd;
+import com.github.luben.zstd.ZstdDecompressCtx;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
+/**
+ * Minecraft compression decoder: reads VarInt(uncompressedSize); 0 means the rest of the frame is
+ * raw, otherwise the rest is a zstd frame (for sizes at least 256) or a zlib frame (smaller, used
+ * for compatibility with vanilla clients).
+ *
+ * <p>Frames are decompressed inline on the event loop using a reused per-thread context, except for
+ * frames at least {@link ZstdAsyncPools#ASYNC_THRESHOLD} bytes which are decompressed on a shared
+ * worker pool. A per-channel FIFO keeps frames in order when asynchronous decompression is in
+ * flight.
+ */
 public class ZstdDecoder extends ByteToMessageDecoder {
 
     public static final long MAX_UNCOMPRESSED_SIZE = 64L * 1024 * 1024;
@@ -22,13 +33,14 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     private static final ThreadLocal<Inflater> INFLATER_THREAD_LOCAL =
             ThreadLocal.withInitial(Inflater::new);
 
+    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor();
+
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
         if (!in.isReadable()) {
             return;
         }
 
-        int startIndex = in.readerIndex();
         int uncompressedSize = readVarInt(in);
 
         if (uncompressedSize < 0) {
@@ -38,94 +50,212 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         if (uncompressedSize == 0) {
             RAW_PACKETS.increment();
             RAW_BYTES.add(in.readableBytes());
-            out.add(in.readRetainedSlice(in.readableBytes()));
+            ByteBuf raw = in.readRetainedSlice(in.readableBytes());
+            if (processor.isIdle()) {
+                out.add(raw);
+            } else {
+                processor.add(ctx, new RawWork(ctx, raw));
+            }
             return;
         }
 
         if (uncompressedSize > MAX_UNCOMPRESSED_SIZE) {
-            throw new IllegalArgumentException("Uncompressed size exceeds limit: " + uncompressedSize);
-        }
-
-        if (in.readableBytes() == 0) {
-            in.readerIndex(startIndex);
-            return;
+            throw new IllegalArgumentException("Frame declares uncompressed size "
+                    + uncompressedSize + " > max " + MAX_UNCOMPRESSED_SIZE);
         }
 
         byte[] input = new byte[in.readableBytes()];
-        in.getBytes(in.readerIndex(), input);
+        in.readBytes(input);
 
-        ByteBuf decompressed = ctx.alloc().directBuffer(uncompressedSize);
+        if (uncompressedSize >= 256) {
+            ZSTD_PACKETS.increment();
+            ZSTD_BYTES.add(uncompressedSize);
+            if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
+                out.add(decompressSync(ctx, input, uncompressedSize));
+            } else {
+                processor.add(ctx, new ZstdWork(ctx, processor, input, uncompressedSize));
+            }
+        } else {
+            ZLIB_PACKETS.increment();
+            ZLIB_BYTES.add(uncompressedSize);
+            if (processor.isIdle()) {
+                out.add(inflateSync(ctx, input, uncompressedSize));
+            } else {
+                processor.add(ctx, new ZlibWork(ctx, input, uncompressedSize));
+            }
+        }
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         try {
-            try {
-                byte[] output = Zstd.decompress(input, uncompressedSize);
-                if (output.length != uncompressedSize) {
-                    throw new IllegalStateException("Zstd decompressed size mismatch: expected "
-                            + uncompressedSize + ", got " + output.length);
-                }
-                decompressed.writeBytes(output);
-                ZSTD_PACKETS.increment();
-                ZSTD_BYTES.add(uncompressedSize);
-            } catch (Exception zstdError) {
-                byte[] output = new byte[uncompressedSize];
-                try {
-                    Inflater inflater = INFLATER_THREAD_LOCAL.get();
-                    inflater.reset();
-                    inflater.setInput(input);
-                    int result = inflater.inflate(output);
-                    if (result != uncompressedSize) {
-                        throw new IllegalStateException("Zlib decompressed size mismatch: expected "
-                                + uncompressedSize + ", got " + result);
-                    }
-                    decompressed.writeBytes(output, 0, result);
-                    ZLIB_PACKETS.increment();
-                    ZLIB_BYTES.add(uncompressedSize);
-                } catch (Exception zlibError) {
-                    throw new IllegalStateException("Both zstd and zlib decompression failed"
-                            + " [sizeVarInt=" + uncompressedSize
-                            + ", frameBytes=" + in.readableBytes()
-                            + ", first32=" + hexDump(in, startIndex, Math.min(32, in.readableBytes())) + "]",
-                            zlibError);
-                }
-            }
-
-            out.add(decompressed);
-            in.skipBytes(input.length);
-        } catch (Exception e) {
-            decompressed.release();
-            throw e;
+            super.channelInactive(ctx);
+        } finally {
+            processor.discardAll();
         }
     }
 
-    private static String hexDump(ByteBuf buf, int index, int length) {
-        StringBuilder sb = new StringBuilder(length * 3);
-        for (int i = 0; i < length && index + i < buf.readableBytes(); i++) {
-            if (i > 0) {
-                sb.append(' ');
-            }
-            sb.append(String.format("%02X", buf.getByte(buf.readerIndex() + index + i)));
+    private static ByteBuf decompressSync(ChannelHandlerContext ctx, byte[] input, int size) {
+        ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
+        byte[] dst = ZstdCodecCtx.scratch(size);
+        int n = zctx.decompress(dst, input);
+        if (n < 0) {
+            throw new IllegalStateException("zstd decompression failed: " + n);
         }
-        return sb.toString();
+        return ctx.alloc().directBuffer(size).writeBytes(dst, 0, n);
     }
 
-    public static int readVarInt(ByteBuf buf) {
+    private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {
+        byte[] dst = ZstdCodecCtx.scratch(size);
+        Inflater inflater = INFLATER_THREAD_LOCAL.get();
+        try {
+            synchronized (inflater) {
+                inflater.reset();
+                inflater.setInput(input);
+                inflater.inflate(dst);
+            }
+        } catch (DataFormatException e) {
+            throw new IllegalStateException("zlib decompression failed", e);
+        }
+        return ctx.alloc().directBuffer(size).writeBytes(dst, 0, size);
+    }
+
+    private static int readVarInt(ByteBuf buf) {
         int value = 0;
-        int position = 0;
-        byte currentByte;
-
-        while (buf.isReadable()) {
-            currentByte = buf.readByte();
-            value |= (currentByte & 0x7F) << position;
-
-            if ((currentByte & 0x80) == 0) {
-                return value;
-            }
-
-            position += 7;
-            if (position >= 32) {
+        int bytes = 0;
+        byte b;
+        do {
+            b = buf.readByte();
+            value |= (b & 0x7F) << (bytes * 7);
+            if (++bytes > 5) {
                 throw new IllegalArgumentException("VarInt too big");
             }
+        } while ((b & 0x80) != 0);
+        return value;
+    }
+
+    private static final class RawWork implements OrderedAsyncProcessor.Work {
+        private final ChannelHandlerContext ctx;
+        private final ByteBuf raw;
+
+        RawWork(ChannelHandlerContext ctx, ByteBuf raw) {
+            this.ctx = ctx;
+            this.raw = raw;
         }
 
-        throw new IllegalArgumentException("VarInt not complete");
+        @Override
+        public boolean isAsync() {
+            return false;
+        }
+
+        @Override
+        public void processSync() {
+            ctx.fireChannelRead(raw);
+        }
+
+        @Override
+        public void submitAsync() {
+        }
+
+        @Override
+        public void discard() {
+            raw.release();
+        }
+    }
+
+    private static final class ZlibWork implements OrderedAsyncProcessor.Work {
+        private final ChannelHandlerContext ctx;
+        private final byte[] input;
+        private final int size;
+
+        ZlibWork(ChannelHandlerContext ctx, byte[] input, int size) {
+            this.ctx = ctx;
+            this.input = input;
+            this.size = size;
+        }
+
+        @Override
+        public boolean isAsync() {
+            return false;
+        }
+
+        @Override
+        public void processSync() {
+            try {
+                ctx.fireChannelRead(inflateSync(ctx, input, size));
+            } catch (Throwable t) {
+                ctx.fireExceptionCaught(t);
+            }
+        }
+
+        @Override
+        public void submitAsync() {
+        }
+
+        @Override
+        public void discard() {
+        }
+    }
+
+    private static final class ZstdWork implements OrderedAsyncProcessor.Work {
+        private final ChannelHandlerContext ctx;
+        private final OrderedAsyncProcessor processor;
+        private final byte[] input;
+        private final int size;
+
+        ZstdWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, byte[] input, int size) {
+            this.ctx = ctx;
+            this.processor = processor;
+            this.input = input;
+            this.size = size;
+        }
+
+        @Override
+        public boolean isAsync() {
+            return size >= ZstdAsyncPools.ASYNC_THRESHOLD;
+        }
+
+        @Override
+        public void processSync() {
+            try {
+                ctx.fireChannelRead(decompressSync(ctx, input, size));
+            } catch (Throwable t) {
+                ctx.fireExceptionCaught(t);
+            }
+        }
+
+        @Override
+        public void submitAsync() {
+            ZstdAsyncPools.executor().execute(() -> {
+                byte[] result;
+                try {
+                    ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
+                    byte[] dst = new byte[size];
+                    int n = zctx.decompress(dst, input);
+                    if (n < 0) {
+                        throw new IllegalStateException("zstd decompression failed: " + n);
+                    }
+                    result = java.util.Arrays.copyOf(dst, n);
+                } catch (Throwable t) {
+                    ctx.executor().execute(() -> {
+                        ctx.fireExceptionCaught(t);
+                        processor.onAsyncComplete(ctx);
+                    });
+                    return;
+                }
+                ctx.executor().execute(() -> complete(result));
+            });
+        }
+
+        private void complete(byte[] result) {
+            if (ctx.channel().isActive()) {
+                ctx.fireChannelRead(ctx.alloc().directBuffer(size).writeBytes(result));
+            }
+            processor.onAsyncComplete(ctx);
+        }
+
+        @Override
+        public void discard() {
+        }
     }
 }

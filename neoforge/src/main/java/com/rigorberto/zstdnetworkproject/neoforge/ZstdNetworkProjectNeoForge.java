@@ -4,14 +4,13 @@ import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
+import com.rigorberto.zstdnetworkproject.StartupBanner;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLPaths;
-import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent;
 import org.slf4j.Logger;
@@ -26,9 +25,29 @@ public class ZstdNetworkProjectNeoForge {
     public ZstdNetworkProjectNeoForge() {
         NeoForge.EVENT_BUS.register(this);
         settings = loadConfig();
-        LOGGER.info("Enabling alpha zstd packet compression for NeoForge");
-        if (FMLLoader.getCurrent().getDist() == Dist.CLIENT) {
+        StartupBanner.print();
+        if (isClientDist()) {
             NeoForge.EVENT_BUS.register(new ZstdNeoForgeClient());
+        }
+    }
+
+    /**
+     * Detects the distribution without linking to a loader API that changed across eras
+     * ({@code FMLEnvironment.dist} field in 1.21.4 vs {@code FMLEnvironment.getDist()} in 26.2).
+     */
+    private static boolean isClientDist() {
+        try {
+            Class<?> envClass = Class.forName("net.neoforged.fml.loading.FMLEnvironment");
+            Object dist;
+            try {
+                dist = envClass.getField("dist").get(null);
+            } catch (NoSuchFieldException e) {
+                dist = envClass.getMethod("getDist").invoke(null);
+            }
+            return (Boolean) dist.getClass().getMethod("isClient").invoke(dist);
+        } catch (Exception e) {
+            LOGGER.warn("Failed to detect NeoForge distribution, assuming dedicated server", e);
+            return false;
         }
     }
 

@@ -22,3 +22,6 @@ hs_err_pid*
 
 # Common working directory
 run
+
+# Multi-version build output
+dist/

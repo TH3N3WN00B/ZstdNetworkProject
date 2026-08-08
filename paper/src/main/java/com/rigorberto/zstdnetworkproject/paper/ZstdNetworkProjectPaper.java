@@ -4,6 +4,7 @@ import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
+import com.rigorberto.zstdnetworkproject.StartupBanner;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import org.bukkit.entity.Player;
@@ -22,7 +23,7 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener {
     public void onEnable() {
         settings = loadConfig();
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("Enabling alpha zstd packet compression for Paper");
+        StartupBanner.print();
     }
 
     private ZstdSettings loadConfig() {
