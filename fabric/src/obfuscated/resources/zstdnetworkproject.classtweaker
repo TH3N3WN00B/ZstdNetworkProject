@@ -1,4 +1,5 @@
 classTweaker v1 named
 
 accessible field net/minecraft/server/network/ServerCommonNetworkHandler connection Lnet/minecraft/network/ClientConnection;
+accessible field net/minecraft/client/network/ClientCommonNetworkHandler connection Lnet/minecraft/network/ClientConnection;
 accessible field net/minecraft/network/ClientConnection channel Lio/netty/channel/Channel;

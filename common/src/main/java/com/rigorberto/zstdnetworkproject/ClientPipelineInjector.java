@@ -11,7 +11,7 @@ public final class ClientPipelineInjector {
     }
 
     @FunctionalInterface
-    private interface ChannelInjector {
+    public interface ChannelInjector {
         boolean apply(Channel channel, ZstdSettings settings) throws Exception;
     }
 
@@ -35,9 +35,29 @@ public final class ClientPipelineInjector {
         return runOnEventLoop(connection, settings, PipelineInjector::injectDecoder);
     }
 
+    /**
+     * Installs both Zstd handlers on a channel. Uses a pre-resolved {@link Channel} so callers on
+     * obfuscated builds can obtain it via compile-time references (which the remapper rewrites)
+     * instead of string-based reflection.
+     */
+    public static boolean inject(Channel channel, ZstdSettings settings) throws Exception {
+        return runOnEventLoop(channel, settings, PipelineInjector::inject);
+    }
+
+    /**
+     * Installs only the Zstd decoder on a channel. See {@link #inject(Channel, ZstdSettings)}.
+     */
+    public static boolean injectDecoder(Channel channel, ZstdSettings settings) throws Exception {
+        return runOnEventLoop(channel, settings, PipelineInjector::injectDecoder);
+    }
+
     private static boolean runOnEventLoop(Object connection, ZstdSettings settings,
                                           ChannelInjector injection) throws Exception {
-        Channel channel = getChannel(connection);
+        return runOnEventLoop(getChannel(connection), settings, injection);
+    }
+
+    private static boolean runOnEventLoop(Channel channel, ZstdSettings settings,
+                                          ChannelInjector injection) throws Exception {
         if (channel == null) {
             return false;
         }

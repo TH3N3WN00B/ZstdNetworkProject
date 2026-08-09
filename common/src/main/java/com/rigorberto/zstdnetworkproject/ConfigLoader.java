@@ -18,19 +18,22 @@ public final class ConfigLoader {
     public static final String KEY_DEBUG_MESSAGE = "debug-message";
     public static final String KEY_HARDWARE_ACCELERATION = "hardware-acceleration";
     public static final String KEY_HARDWARE_ACCELERATION_THREADS = "hardware-acceleration-threads";
+    public static final String KEY_COMPRESSION_THRESHOLD = "compression-threshold";
+    public static final String KEY_COMPRESS_IF_BENEFICIAL = "compress-if-beneficial";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
     public static final int DEFAULT_FAST_LEVEL = 1;
     public static final int MAX_FAST_LEVEL = 99;
     public static final int MAX_HARDWARE_ACCELERATION_THREADS = 64;
+    public static final int MIN_COMPRESSION_THRESHOLD = 256;
 
     /**
      * Current config schema version. Bump this and append a new block to {@link #DEFAULT_BLOCKS}
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 2;
+    public static final int CONFIG_VERSION = 3;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -60,7 +63,15 @@ public final class ConfigLoader {
             "# How many CPU worker threads zstd may use per large packet.\n" +
             "# 0 = auto (half of the available processors, capped at 4).\n" +
             "# A larger value can speed up huge packets (e.g. chunks) at the cost of CPU usage.\n" +
-            "hardware-acceleration-threads: 0"
+            "hardware-acceleration-threads: 0",
+            "# Packets smaller than this (uncompressed bytes) are sent uncompressed.\n" +
+            "# Must be at least 256, so that every packet this encoder compresses is decoded\n" +
+            "# as zstd rather than zlib by peers.\n" +
+            "compression-threshold: 256",
+            "# Send a packet uncompressed when compression would not actually shrink it.\n" +
+            "# Incompressible data (e.g. already-compressed textures or chunk section data)\n" +
+            "# can otherwise end up LARGER after zstd than before. Enabled by default.\n" +
+            "compress-if-beneficial: true"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -102,6 +113,9 @@ public final class ConfigLoader {
         settings.setDebugMessage(parseBoolean(values.get(KEY_DEBUG_MESSAGE), true));
         settings.setHardwareAcceleration(parseBoolean(values.get(KEY_HARDWARE_ACCELERATION), true));
         settings.setHardwareAccelerationThreads(clamp(parseInt(values.get(KEY_HARDWARE_ACCELERATION_THREADS), 0), 0, MAX_HARDWARE_ACCELERATION_THREADS));
+        settings.setCompressionThreshold(Math.max(MIN_COMPRESSION_THRESHOLD,
+                parseInt(values.get(KEY_COMPRESSION_THRESHOLD), ZstdSettings.MIN_COMPRESSION_THRESHOLD)));
+        settings.setCompressIfBeneficial(parseBoolean(values.get(KEY_COMPRESS_IF_BENEFICIAL), true));
         return settings;
     }
 

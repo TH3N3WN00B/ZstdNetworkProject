@@ -5,14 +5,17 @@ import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
+import io.netty.channel.Channel;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientCommonNetworkHandler;
 import net.minecraft.client.network.ClientConfigurationNetworkHandler;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.ClientConnection;
 
 import java.nio.file.Path;
 
@@ -37,10 +40,11 @@ public class ZstdFabricClient implements ClientModInitializer {
         tryInject(handler, ClientPipelineInjector::inject);
     }
 
-    private static void tryInject(Object handler, ClientPipelineInjector.Injector injection) {
+    private static void tryInject(ClientCommonNetworkHandler handler, ClientPipelineInjector.ChannelInjector injection) {
         try {
-            Object connection = ClientPipelineInjector.getConnection(handler);
-            if (connection != null && injection.apply(connection, settings)) {
+            ClientConnection connection = handler.connection;
+            Channel channel = connection != null ? connection.channel : null;
+            if (channel != null && injection.apply(channel, settings)) {
                 return;
             }
             ZstdNetworkProjectFabric.LOGGER.debug("No compression handlers replaced on client connection");

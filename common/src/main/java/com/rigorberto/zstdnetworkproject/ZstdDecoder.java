@@ -4,6 +4,7 @@ import com.github.luben.zstd.ZstdDecompressCtx;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.zip.DataFormatException;
@@ -97,12 +98,15 @@ public class ZstdDecoder extends ByteToMessageDecoder {
 
     private static ByteBuf decompressSync(ChannelHandlerContext ctx, byte[] input, int size) {
         ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
-        byte[] dst = ZstdCodecCtx.scratch(size);
+        ByteBuf out = ctx.alloc().directBuffer(size);
+        ByteBuffer dst = out.nioBuffer(0, size);
         int n = zctx.decompress(dst, input);
         if (n < 0) {
+            out.release();
             throw new IllegalStateException("zstd decompression failed: " + n);
         }
-        return ctx.alloc().directBuffer(size).writeBytes(dst, 0, n);
+        out.writerIndex(n);
+        return out;
     }
 
     private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {
@@ -227,15 +231,18 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         @Override
         public void submitAsync() {
             ZstdAsyncPools.executor().execute(() -> {
-                byte[] result;
+                ByteBuf result;
                 try {
                     ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
-                    byte[] dst = new byte[size];
+                    ByteBuf out = ctx.alloc().directBuffer(size);
+                    ByteBuffer dst = out.nioBuffer(0, size);
                     int n = zctx.decompress(dst, input);
                     if (n < 0) {
+                        out.release();
                         throw new IllegalStateException("zstd decompression failed: " + n);
                     }
-                    result = java.util.Arrays.copyOf(dst, n);
+                    out.writerIndex(n);
+                    result = out;
                 } catch (Throwable t) {
                     ctx.executor().execute(() -> {
                         ctx.fireExceptionCaught(t);
@@ -247,9 +254,11 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             });
         }
 
-        private void complete(byte[] result) {
+        private void complete(ByteBuf result) {
             if (ctx.channel().isActive()) {
-                ctx.fireChannelRead(ctx.alloc().directBuffer(size).writeBytes(result));
+                ctx.fireChannelRead(result);
+            } else {
+                result.release();
             }
             processor.onAsyncComplete(ctx);
         }

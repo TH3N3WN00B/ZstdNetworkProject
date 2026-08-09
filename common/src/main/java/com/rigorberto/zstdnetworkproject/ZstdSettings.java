@@ -9,12 +9,21 @@ public final class ZstdSettings {
      */
     public static final int HARDWARE_ACCEL_MIN_SIZE = 512 * 1024;
 
+    /**
+     * Packets smaller than this (uncompressed bytes) are never compressed. Must be at least 256:
+     * the decoder decides zstd vs zlib by whether the declared uncompressed size is at least 256,
+     * so anything this encoder compresses must be >= 256.
+     */
+    public static final int MIN_COMPRESSION_THRESHOLD = 256;
+
     private int compressionLevel = 3;
     private boolean fast;
     private int fastLevel = 1;
     private boolean debugMessage = true;
     private boolean hardwareAcceleration = true;
     private int hardwareAccelerationThreads;
+    private int compressionThreshold = MIN_COMPRESSION_THRESHOLD;
+    private boolean compressIfBeneficial = true;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -66,6 +75,22 @@ public final class ZstdSettings {
 
     public void setHardwareAccelerationThreads(int hardwareAccelerationThreads) {
         this.hardwareAccelerationThreads = hardwareAccelerationThreads;
+    }
+
+    public int getCompressionThreshold() {
+        return compressionThreshold;
+    }
+
+    public void setCompressionThreshold(int compressionThreshold) {
+        this.compressionThreshold = Math.max(MIN_COMPRESSION_THRESHOLD, compressionThreshold);
+    }
+
+    public boolean isCompressIfBeneficial() {
+        return compressIfBeneficial;
+    }
+
+    public void setCompressIfBeneficial(boolean compressIfBeneficial) {
+        this.compressIfBeneficial = compressIfBeneficial;
     }
 
     /**
