@@ -12,17 +12,25 @@ import java.util.zip.Inflater;
 
 /**
  * Minecraft compression decoder: reads VarInt(uncompressedSize); 0 means the rest of the frame is
- * raw, otherwise the rest is a zstd frame (for sizes at least 256) or a zlib frame (smaller, used
- * for compatibility with vanilla clients).
+ * raw, otherwise the rest is a zstd or zlib frame. The compressor is chosen by sniffing the frame
+ * magic: frames starting with the zstd magic {@code 28 B5 2F FD} are decompressed with zstd and
+ * everything else with zlib, so the decoder transparently supports vanilla servers (zlib), zstd
+ * peers and raw frames in any combination.
  *
  * <p>Frames are decompressed inline on the event loop using a reused per-thread context, except for
  * frames at least {@link ZstdAsyncPools#ASYNC_THRESHOLD} bytes which are decompressed on a shared
  * worker pool. A per-channel FIFO keeps frames in order when asynchronous decompression is in
  * flight.
+ *
+ * <p>When the incoming frame is a direct {@link ByteBuf} it is decompressed straight from the
+ * buffer's memory into a pooled direct buffer, avoiding intermediate {@code byte[]} copies.
  */
 public class ZstdDecoder extends ByteToMessageDecoder {
 
     public static final long MAX_UNCOMPRESSED_SIZE = 64L * 1024 * 1024;
+
+    /** First four bytes of every zstd frame. */
+    private static final byte[] ZSTD_MAGIC = {(byte) 0x28, (byte) 0xB5, (byte) 0x2F, (byte) 0xFD};
 
     public static final LongAdder ZSTD_PACKETS = new LongAdder();
     public static final LongAdder ZSTD_BYTES = new LongAdder();
@@ -65,26 +73,40 @@ public class ZstdDecoder extends ByteToMessageDecoder {
                     + uncompressedSize + " > max " + MAX_UNCOMPRESSED_SIZE);
         }
 
-        byte[] input = new byte[in.readableBytes()];
-        in.readBytes(input);
-
-        if (uncompressedSize >= 256) {
+        if (in.readableBytes() >= 4 && isZstdMagic(in)) {
             ZSTD_PACKETS.increment();
             ZSTD_BYTES.add(uncompressedSize);
+            ZstdCapability.markZstdObserved(ctx.channel());
+            ByteBuf payload = in.readRetainedSlice(in.readableBytes());
             if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
-                out.add(decompressSync(ctx, input, uncompressedSize));
+                try {
+                    out.add(decompressSync(ctx, payload, uncompressedSize));
+                } finally {
+                    payload.release();
+                }
             } else {
-                processor.add(ctx, new ZstdWork(ctx, processor, input, uncompressedSize));
+                processor.add(ctx, new ZstdWork(ctx, processor, payload, uncompressedSize));
             }
-        } else {
-            ZLIB_PACKETS.increment();
-            ZLIB_BYTES.add(uncompressedSize);
-            if (processor.isIdle()) {
-                out.add(inflateSync(ctx, input, uncompressedSize));
-            } else {
-                processor.add(ctx, new ZlibWork(ctx, input, uncompressedSize));
-            }
+            return;
         }
+
+        ZLIB_PACKETS.increment();
+        ZLIB_BYTES.add(uncompressedSize);
+        byte[] input = new byte[in.readableBytes()];
+        in.readBytes(input);
+        if (processor.isIdle()) {
+            out.add(inflateSync(ctx, input, uncompressedSize));
+        } else {
+            processor.add(ctx, new ZlibWork(ctx, input, uncompressedSize));
+        }
+    }
+
+    private static boolean isZstdMagic(ByteBuf in) {
+        int idx = in.readerIndex();
+        return in.getByte(idx) == ZSTD_MAGIC[0]
+                && in.getByte(idx + 1) == ZSTD_MAGIC[1]
+                && in.getByte(idx + 2) == ZSTD_MAGIC[2]
+                && in.getByte(idx + 3) == ZSTD_MAGIC[3];
     }
 
     @Override
@@ -96,11 +118,22 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         }
     }
 
-    private static ByteBuf decompressSync(ChannelHandlerContext ctx, byte[] input, int size) {
+    /**
+     * Decompresses a zstd frame held by {@code in} into a pooled direct buffer. May run on any
+     * thread; the caller owns releasing {@code in}.
+     */
+    private static ByteBuf decompressSync(ChannelHandlerContext ctx, ByteBuf in, int size) {
         ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
         ByteBuf out = ctx.alloc().directBuffer(size);
         ByteBuffer dst = out.nioBuffer(0, size);
-        int n = zctx.decompress(dst, input);
+        int n;
+        if (in.isDirect()) {
+            n = zctx.decompress(dst, in.nioBuffer());
+        } else {
+            byte[] src = ZstdCodecCtx.scratch(in.readableBytes());
+            in.getBytes(in.readerIndex(), src);
+            n = zctx.decompress(dst, src);
+        }
         if (n < 0) {
             out.release();
             throw new IllegalStateException("zstd decompression failed: " + n);
@@ -204,13 +237,13 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     private static final class ZstdWork implements OrderedAsyncProcessor.Work {
         private final ChannelHandlerContext ctx;
         private final OrderedAsyncProcessor processor;
-        private final byte[] input;
+        private final ByteBuf in;
         private final int size;
 
-        ZstdWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, byte[] input, int size) {
+        ZstdWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in, int size) {
             this.ctx = ctx;
             this.processor = processor;
-            this.input = input;
+            this.in = in;
             this.size = size;
         }
 
@@ -222,9 +255,11 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         @Override
         public void processSync() {
             try {
-                ctx.fireChannelRead(decompressSync(ctx, input, size));
+                ctx.fireChannelRead(decompressSync(ctx, in, size));
             } catch (Throwable t) {
                 ctx.fireExceptionCaught(t);
+            } finally {
+                in.release();
             }
         }
 
@@ -233,17 +268,9 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             ZstdAsyncPools.executor().execute(() -> {
                 ByteBuf result;
                 try {
-                    ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
-                    ByteBuf out = ctx.alloc().directBuffer(size);
-                    ByteBuffer dst = out.nioBuffer(0, size);
-                    int n = zctx.decompress(dst, input);
-                    if (n < 0) {
-                        out.release();
-                        throw new IllegalStateException("zstd decompression failed: " + n);
-                    }
-                    out.writerIndex(n);
-                    result = out;
+                    result = decompressSync(ctx, in, size);
                 } catch (Throwable t) {
+                    in.release();
                     ctx.executor().execute(() -> {
                         ctx.fireExceptionCaught(t);
                         processor.onAsyncComplete(ctx);
@@ -255,16 +282,21 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         }
 
         private void complete(ByteBuf result) {
-            if (ctx.channel().isActive()) {
-                ctx.fireChannelRead(result);
-            } else {
-                result.release();
+            try {
+                if (ctx.channel().isActive()) {
+                    ctx.fireChannelRead(result);
+                } else {
+                    result.release();
+                }
+            } finally {
+                in.release();
+                processor.onAsyncComplete(ctx);
             }
-            processor.onAsyncComplete(ctx);
         }
 
         @Override
         public void discard() {
+            in.release();
         }
     }
 }

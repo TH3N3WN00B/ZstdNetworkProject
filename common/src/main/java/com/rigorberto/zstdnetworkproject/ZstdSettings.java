@@ -16,6 +16,10 @@ public final class ZstdSettings {
      */
     public static final int MIN_COMPRESSION_THRESHOLD = 256;
 
+    /** Auto-detected hardware-acceleration worker count, computed once (half the cores, capped). */
+    private static final int AUTO_WORKERS =
+            Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+
     private int compressionLevel = 3;
     private boolean fast;
     private int fastLevel = 1;
@@ -106,11 +110,6 @@ public final class ZstdSettings {
         if (hardwareAccelerationThreads > 0) {
             return hardwareAccelerationThreads;
         }
-        return autoWorkers();
-    }
-
-    private static int autoWorkers() {
-        int cores = Runtime.getRuntime().availableProcessors();
-        return Math.max(1, Math.min(4, cores / 2));
+        return AUTO_WORKERS;
     }
 }

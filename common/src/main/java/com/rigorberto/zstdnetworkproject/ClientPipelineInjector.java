@@ -19,11 +19,12 @@ public final class ClientPipelineInjector {
     }
 
     /**
-     * Installs both Zstd handlers (encoder + decoder) on a client connection. Intended for the
-     * play phase, once the remote side is also sending Zstd.
+     * Installs both Zstd handlers (encoder + decoder) on a client connection. The encoder only
+     * switches to zstd once the remote end has been observed sending zstd, so a modded client
+     * stays fully compatible with vanilla servers.
      */
     public static boolean inject(Object connection, ZstdSettings settings) throws Exception {
-        return runOnEventLoop(connection, settings, PipelineInjector::inject);
+        return runOnEventLoop(connection, settings, PipelineInjector::injectClient);
     }
 
     /**
@@ -41,7 +42,7 @@ public final class ClientPipelineInjector {
      * instead of string-based reflection.
      */
     public static boolean inject(Channel channel, ZstdSettings settings) throws Exception {
-        return runOnEventLoop(channel, settings, PipelineInjector::inject);
+        return runOnEventLoop(channel, settings, PipelineInjector::injectClient);
     }
 
     /**
@@ -82,7 +83,11 @@ public final class ClientPipelineInjector {
         return ReflectionUtil.getFieldValue(packetListener, "connection");
     }
 
-    private static Channel getChannel(Object connection) {
+    /**
+     * Resolves the underlying {@link Channel} from a client connection object, preferring the
+     * public {@code getChannel()} method and falling back to the {@code channel} field.
+     */
+    public static Channel getChannel(Object connection) {
         try {
             Object value = connection.getClass().getMethod("getChannel").invoke(connection);
             if (value instanceof Channel channel) {

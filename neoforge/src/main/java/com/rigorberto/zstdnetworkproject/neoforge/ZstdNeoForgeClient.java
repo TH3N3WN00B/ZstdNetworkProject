@@ -5,6 +5,7 @@ import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
+import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
@@ -40,11 +41,14 @@ public class ZstdNeoForgeClient {
 
     @SubscribeEvent
     public void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        if (!ZstdNative.isAvailable()) {
+            return; // Native library missing on this platform: never inject zstd handlers.
+        }
         try {
             Connection connection = event.getConnection();
             Object channelValue = ReflectionUtil.getFieldValue(connection, "channel");
             if (channelValue instanceof Channel channel) {
-                channel.eventLoop().execute(() -> PipelineInjector.inject(channel, settings));
+                channel.eventLoop().execute(() -> PipelineInjector.injectClient(channel, settings));
             }
         } catch (Exception e) {
             LOGGER.debug("Failed to inject Zstd handlers on client", e);
