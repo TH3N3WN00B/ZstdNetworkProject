@@ -19,19 +19,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Unobfuscated (26.x) and Velocity builds target Java 25; install it first so
-      # the final setup-java invocation leaves JAVA_HOME on Java 21 (LTS) for Gradle.
-      - name: Set up JDK 25 (toolchain)
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '25'
-
-      - name: Set up JDK 21 (toolchain + JAVA_HOME)
+      # Fabric Loom 1.18.0-alpha.15 requires the Gradle daemon itself to run on
+      # JVM 25, so JAVA_HOME must point at JDK 25 for the build. The obfuscated
+      # (1.21.x) modules still compile against the Java 21 toolchain, which Gradle
+      # discovers via JAVA_HOME_21_X64 (see gradle.properties fromEnv setting).
+      - name: Set up JDK 21 (toolchain)
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+
+      - name: Set up JDK 25 (toolchain + JAVA_HOME)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
