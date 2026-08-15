@@ -16,6 +16,12 @@ pluginManagement {
     }
 }
 
+plugins {
+    // Auto-downloads missing toolchains (Java 21 for obfuscated, 25 for 26.x/velocity),
+    // so the build works on GitHub Actions and any fresh machine without preinstalled JDKs.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
 rootProject.name = 'ZstdNetworkProject'
 
 include 'common'

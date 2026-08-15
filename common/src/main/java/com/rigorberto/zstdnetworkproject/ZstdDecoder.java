@@ -77,6 +77,10 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             ZSTD_PACKETS.increment();
             ZSTD_BYTES.add(uncompressedSize);
             ZstdCapability.markZstdObserved(ctx.channel());
+            int frameBytes = in.readableBytes();
+            TraceDump.dump("client-frame",
+                    "size=" + uncompressedSize + " frameBytes=" + frameBytes
+                            + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
             ByteBuf payload = in.readRetainedSlice(in.readableBytes());
             if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
                 try {
@@ -126,20 +130,67 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
         ByteBuf out = ctx.alloc().directBuffer(size);
         ByteBuffer dst = out.nioBuffer(0, size);
-        int n;
-        if (in.isDirect()) {
-            n = zctx.decompress(dst, in.nioBuffer());
-        } else {
-            byte[] src = ZstdCodecCtx.scratch(in.readableBytes());
-            in.getBytes(in.readerIndex(), src);
-            n = zctx.decompress(dst, src);
-        }
-        if (n < 0) {
+        try {
+            int n;
+            if (in.isDirect()) {
+                n = zctx.decompress(dst, in.nioBuffer());
+            } else {
+                int len = in.readableBytes();
+                byte[] src = ZstdCodecCtx.scratch(len);
+                in.getBytes(in.readerIndex(), src, 0, len);
+                n = zctx.decompressByteArrayToDirectByteBuffer(dst, 0, size, src, 0, len);
+            }
+            if (n < 0) {
+                String detail = describeFailure(in, size, "zstd decompression failed: " + n);
+                TraceDump.dump("client-decode", detail);
+                throw new IllegalStateException(detail);
+            }
+            out.writerIndex(n);
+            return out;
+        } catch (RuntimeException e) {
             out.release();
-            throw new IllegalStateException("zstd decompression failed: " + n);
+            String detail = describeFailure(in, size, e.toString());
+            TraceDump.dump("client-decode", detail);
+            throw new IllegalStateException(detail, e);
         }
-        out.writerIndex(n);
-        return out;
+    }
+
+    private static String describeFailure(ByteBuf in, int size, String reason) {
+        StringBuilder sb = new StringBuilder(1024);
+        sb.append("zstd decompress failed. declaredSize=").append(size)
+                .append(" readableBytes=").append(in.readableBytes())
+                .append(" isDirect=").append(in.isDirect())
+                .append(" clazz=").append(in.getClass().getSimpleName())
+                .append(" reason=").append(reason);
+        int len = in.readableBytes();
+        if (len > 0) {
+            int idx = in.readerIndex();
+            int head = Math.min(len, 64);
+            int tail = Math.min(len - head, 32);
+            sb.append(" head=").append(hex(in, idx, head));
+            if (tail > 0) {
+                sb.append(" tail=").append(hex(in, idx + len - tail, tail));
+            }
+            sb.append(" fullLen=").append(len);
+            try {
+                sb.append(" fullHex=").append(hex(in, idx, len));
+            } catch (RuntimeException ex) {
+                sb.append(" fullHex=unavailable(").append(ex).append(')');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String hex(ByteBuf buf, int index, int length) {
+        StringBuilder sb = new StringBuilder(length * 2);
+        for (int i = 0; i < length; i++) {
+            int b = buf.getUnsignedByte(index + i);
+            if (b < 0x10) {
+                sb.append('0');
+            }
+            sb.append(Integer.toHexString(b));
+        }
+        return sb.toString();
     }
 
     private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {

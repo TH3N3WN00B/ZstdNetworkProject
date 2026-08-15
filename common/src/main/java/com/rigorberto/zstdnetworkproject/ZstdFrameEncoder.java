@@ -208,7 +208,44 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         out.readerIndex(frameStart);
         PACKETS_COMPRESSED.increment();
         OUTPUT_BYTES.add(out.readableBytes());
+        dumpFrame("proxy-frame", out, uncompressed, size, frameLength);
         return out;
+    }
+
+    private static void dumpFrame(String tag, ByteBuf out, int uncompressed, int size, int frameLength) {
+        try {
+            int readable = out.readableBytes();
+            int idx = out.readerIndex();
+            int head = Math.min(readable, 24);
+            int tail = Math.min(readable - head, 8);
+            StringBuilder sb = new StringBuilder(256);
+            sb.append("uncompressed=").append(uncompressed)
+                    .append(" size=").append(size)
+                    .append(" frameLength=").append(frameLength)
+                    .append(" varIntLen=").append(varIntLength(frameLength))
+                    .append(" readable=").append(readable)
+                    .append(" head=");
+            for (int i = 0; i < head; i++) {
+                int b = out.getUnsignedByte(idx + i);
+                if (b < 0x10) {
+                    sb.append('0');
+                }
+                sb.append(Integer.toHexString(b));
+            }
+            if (tail > 0) {
+                sb.append(" tail=");
+                for (int i = 0; i < tail; i++) {
+                    int b = out.getUnsignedByte(idx + readable - tail + i);
+                    if (b < 0x10) {
+                        sb.append('0');
+                    }
+                    sb.append(Integer.toHexString(b));
+                }
+            }
+            TraceDump.dump(tag, sb.toString());
+        } catch (RuntimeException e) {
+            // tracing must never crash the connection
+        }
     }
 
     private static ByteBuf rawAlloc(ChannelHandlerContext ctx, int uncompressed) {
