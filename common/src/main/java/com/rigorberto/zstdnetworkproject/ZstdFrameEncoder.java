@@ -213,6 +213,9 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     }
 
     private static void dumpFrame(String tag, ByteBuf out, int uncompressed, int size, int frameLength) {
+        if (!TraceDump.isEnabled()) {
+            return;
+        }
         try {
             int readable = out.readableBytes();
             int idx = out.readerIndex();
@@ -356,40 +359,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         }
 
         private ByteBuf compressOnWorker() {
-            ZstdCompressCtx zctx = ZstdCodecCtx.compress(level, workers);
-            int bound = ZstdCodecCtx.compressBound(uncompressed);
-            int sizeVarIntLength = varIntLength(uncompressed);
-
-            if (in.isDirect()) {
-                ByteBuf out = ctx.alloc().directBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength + bound);
-                ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
-                int size = zctx.compress(dst, in.nioBuffer());
-                if (size < 0) {
-                    out.release();
-                    throw new IllegalStateException("zstd compression failed: " + size);
-                }
-                return finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
-            }
-
-            byte[] src = new byte[uncompressed];
-            in.getBytes(in.readerIndex(), src);
-            byte[] dstArr = ZstdCodecCtx.scratch(bound);
-            int size = zctx.compress(dstArr, src);
-            if (size < 0) {
-                throw new IllegalStateException("zstd compression failed: " + size);
-            }
-            if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
-                ByteBuf out = rawAlloc(ctx, uncompressed);
-                out.writeByte(0);
-                out.writeBytes(src);
-                OUTPUT_BYTES.add(out.readableBytes());
-                return out;
-            }
-            ByteBuf out = allocCompressed(ctx, uncompressed, size);
-            out.writeBytes(dstArr, 0, size);
-            PACKETS_COMPRESSED.increment();
-            OUTPUT_BYTES.add(out.readableBytes());
-            return out;
+            return compressDirectOrCopy(ctx, in, uncompressed, level, workers, settings);
         }
 
         private void complete(ByteBuf out) {

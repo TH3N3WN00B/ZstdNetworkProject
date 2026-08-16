@@ -5,7 +5,7 @@
   "name": "ZstdNetworkProject",
   "description": "Zstd packet compressor for Minecraft client and server.",
   "authors": ["Rigorberto"],
-  "license": "All-Rights-Reserved",
+  "license": "AGPL-3.0-or-later",
   "environment": "*",
   "entrypoints": {
     "main": [

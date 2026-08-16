@@ -379,51 +379,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         }
 
         private ByteBuf compressOnWorker() {
-            ZstdCompressCtx zctx = ZstdCodecCtx.compress(level, workers);
-            int bound = ZstdCodecCtx.compressBound(readable);
-            int varIntLength = varIntLength(readable);
-
-            if (in.isDirect()) {
-                ByteBuf out = ctx.alloc().directBuffer(varIntLength + bound);
-                ByteBuffer dst = out.nioBuffer(varIntLength, bound);
-                int size = zctx.compress(dst, in.nioBuffer());
-                if (size < 0) {
-                    out.release();
-                    throw new IllegalStateException("zstd compression failed: " + size);
-                }
-                out.writerIndex(varIntLength + size);
-                writeVarIntAt(out, 0, readable);
-                if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-                    out.clear();
-                    writeVarInt(out, 0);
-                    out.writeBytes(in, in.readerIndex(), readable);
-                } else {
-                    PACKETS_COMPRESSED.increment();
-                }
-                OUTPUT_BYTES.add(out.readableBytes());
-                return out;
-            }
-
-            byte[] input = new byte[readable];
-            in.getBytes(in.readerIndex(), input);
-            byte[] dstArr = ZstdCodecCtx.scratch(bound);
-            int size = zctx.compress(dstArr, input);
-            if (size < 0) {
-                throw new IllegalStateException("zstd compression failed: " + size);
-            }
-            if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-                ByteBuf out = ctx.alloc().buffer(1 + readable);
-                writeVarInt(out, 0);
-                out.writeBytes(input);
-                OUTPUT_BYTES.add(out.readableBytes());
-                return out;
-            }
-            ByteBuf out = ctx.alloc().buffer(varIntLength + size);
-            writeVarInt(out, readable);
-            out.writeBytes(dstArr, 0, size);
-            PACKETS_COMPRESSED.increment();
-            OUTPUT_BYTES.add(out.readableBytes());
-            return out;
+            return compressDirectOrCopy(ctx, in, readable, level, workers, settings);
         }
 
         private void complete(ByteBuf out) {

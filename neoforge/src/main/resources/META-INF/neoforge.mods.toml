@@ -1,5 +1,5 @@
 modLoader="neoforge"
-license="All-Rights-Reserved"
+license="AGPL-3.0-or-later"
 
 [[mods]]
 modId="zstdnetworkproject"

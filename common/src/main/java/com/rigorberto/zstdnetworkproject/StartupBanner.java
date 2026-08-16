@@ -19,7 +19,7 @@ public final class StartupBanner {
             "/____/____//_/ /_____/  "
     };
 
-    private static final String FOOTER = "alpha experimental builds v0.1 by Rigorberto";
+    private static final String FOOTER = "beta-0.2 by Rigorberto";
 
     private StartupBanner() {
     }

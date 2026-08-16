@@ -77,10 +77,12 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             ZSTD_PACKETS.increment();
             ZSTD_BYTES.add(uncompressedSize);
             ZstdCapability.markZstdObserved(ctx.channel());
-            int frameBytes = in.readableBytes();
-            TraceDump.dump("client-frame",
-                    "size=" + uncompressedSize + " frameBytes=" + frameBytes
-                            + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
+            if (TraceDump.isEnabled()) {
+                int frameBytes = in.readableBytes();
+                TraceDump.dump("client-frame",
+                        "size=" + uncompressedSize + " frameBytes=" + frameBytes
+                                + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
+            }
             ByteBuf payload = in.readRetainedSlice(in.readableBytes());
             if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
                 try {
@@ -196,14 +198,18 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {
         byte[] dst = ZstdCodecCtx.scratch(size);
         Inflater inflater = INFLATER_THREAD_LOCAL.get();
+        int n;
         try {
             synchronized (inflater) {
                 inflater.reset();
                 inflater.setInput(input);
-                inflater.inflate(dst);
+                n = inflater.inflate(dst);
             }
         } catch (DataFormatException e) {
             throw new IllegalStateException("zlib decompression failed", e);
+        }
+        if (n != size) {
+            throw new IllegalStateException("zlib decompression produced " + n + " bytes, expected " + size);
         }
         return ctx.alloc().directBuffer(size).writeBytes(dst, 0, size);
     }

@@ -9,19 +9,21 @@ apply plugin: rootProject.minecraftEra == 'obfuscated' ? 'net.fabricmc.fabric-lo
 
 ['jar', 'remapJar', 'remapSourcesJar', 'sourcesJar'].each { name ->
     if (tasks.findByName(name) != null) {
-        tasks.named(name).configure { archiveVersion = "alpha-0.1-mc${project.minecraft_version}" }
+        tasks.named(name).configure { archiveVersion = "${rootProject.mod_version}-mc${project.minecraft_version}" }
     }
 }
 
 jar {
     dependsOn project(':common').jar
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from {
-        zipTree(project(':common').jar.archiveFile.get()).matching { include 'com/rigorberto/zstdnetworkproject/**' }
+    from(zipTree(project(':common').jar.archiveFile)) {
+        include 'com/rigorberto/zstdnetworkproject/**'
     }
+    def zstdVersion = project.zstd_version
+    def runtimeClasspath = configurations.runtimeClasspath
     from {
-        def zstd = configurations.runtimeClasspath.find { it.name == "zstd-jni-${project.zstd_version}.jar" }
-        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : project.files()
+        def zstd = runtimeClasspath.find { it.name == "zstd-jni-${zstdVersion}.jar" }
+        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : []
     }
 }
 
@@ -61,11 +63,14 @@ dependencies {
 }
 
 processResources {
-    inputs.property "version", project.version
-    inputs.property "loader_version", project.fabric_loader_version
-    inputs.property "minecraft_version", project.minecraft_version
+    def modVersion = project.version
+    def loaderVersion = project.fabric_loader_version
+    def mcVersion = project.minecraft_version
+    inputs.property "version", modVersion
+    inputs.property "loader_version", loaderVersion
+    inputs.property "minecraft_version", mcVersion
     filesMatching("fabric.mod.json") {
-        expand "version": project.version, "loader_version": project.fabric_loader_version, "minecraft_version": project.minecraft_version
+        expand "version": modVersion, "loader_version": loaderVersion, "minecraft_version": mcVersion
     }
 }
 

@@ -34,11 +34,13 @@ jar {
     from('src/main/resources') {
         include 'META-INF/neoforge.mods.toml'
     }
-    from {
-        zipTree(project(':common').jar.archiveFile.get()).matching { include 'com/rigorberto/zstdnetworkproject/**' }
+    from(zipTree(project(':common').jar.archiveFile)) {
+        include 'com/rigorberto/zstdnetworkproject/**'
     }
+    def zstdVersion = project.zstd_version
+    def runtimeClasspath = configurations.runtimeClasspath
     from {
-        def zstd = configurations.runtimeClasspath.find { it.name == "zstd-jni-${project.zstd_version}.jar" }
-        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : project.files()
+        def zstd = runtimeClasspath.find { it.name == "zstd-jni-${zstdVersion}.jar" }
+        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : []
     }
 }

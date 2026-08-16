@@ -20,9 +20,9 @@ subprojects {
     tasks.withType(Jar).configureEach {
         // Version-agnostic modules (velocity) keep the plain label; MC-targeted
         // modules get the Minecraft version embedded so multiple version builds
-        // can coexist, e.g. zstd-neoforge-alpha-0.1-mc26.2.jar.
+        // can coexist, e.g. zstd-neoforge-beta-0.2-mc26.2.jar.
         def mcSuffix = project.name == 'velocity' ? '' : "-mc${project.minecraft_version}"
-        archiveVersion = "alpha-0.1${mcSuffix}"
+        archiveVersion = "${rootProject.mod_version}${mcSuffix}"
     }
 
     def projectJavaVersion = (project.findProperty("${project.name}_java_version") ?: rootProject.javaVersion).toInteger()
