@@ -6,7 +6,7 @@ menor coste de CPU** (ver [benchmark](#benchmark-zlib-vs-zstd)), compatible con 
 
 - **Versión:** beta-0.2
 - **Licencia:** AGPL-3.0-or-later
-- **Autor:** Rigorberto
+- **Autores:** Rigorberto and Bick Pickle from OpenCode
 
 ---
 
@@ -44,6 +44,9 @@ menor coste de CPU** (ver [benchmark](#benchmark-zlib-vs-zstd)), compatible con 
   Si la plataforma no soporta la librería, el plugin degrada a zlib sin fallar.
 - **Estadísticas en vivo**: `zstd-stats.log` registra cada minuto paquetes/bytes comprimidos, descomprimidos por zstd,
   y fallbacks a zlib/raw.
+- **Overlay opcional en el cliente**: con `debug-overlay: true`, la vista de ancho de banda del debug (F3 + 3)
+  muestra el estado de zstd, paquetes enviados/recibidos y el ratio de compresión en tiempo real.
+  Desactivado por defecto.
 - **Trazas de paquetes** para depuración (opcional, desactivadas por defecto).
 - **Banner de arranque** ZSTD en consola.
 
@@ -111,7 +114,7 @@ cuando una versión nueva añade opciones, se añaden al final sin tocar lo que 
 # ZstdNetworkProject configuration
 # Config files are auto-updated: new settings are appended at the bottom
 # as the plugin evolves, so this file stays in sync with the latest version.
-config-version: 3
+config-version: 4
 
 # Compression level used for zstd packet compression (see https://github.com/facebook/zstd).
 # The default level (3) is the level recommended by Zstandard.
@@ -152,6 +155,11 @@ compression-threshold: 256
 # Incompressible data (e.g. already-compressed textures or chunk section data)
 # can otherwise end up LARGER after zstd than before. Enabled by default.
 compress-if-beneficial: true
+
+# Show zstd statistics (status, packets, compression ratio) in the client
+# debug screen bandwidth view (F3 + 3). Client-side only.
+# Disabled by default.
+debug-overlay: false
 ```
 
 ### Opciones explicadas
@@ -166,10 +174,11 @@ compress-if-beneficial: true
 | `hardware-acceleration-threads` | 0 – 64 | `0` | Workers por paquete grande. `0` = auto (mitad de CPUs, máx. 4). |
 | `compression-threshold` | ≥ 256 | `256` | Paquetes menores no se comprimen. Mínimo 256 para distinguir zstd de zlib. |
 | `compress-if-beneficial` | true / false | `true` | Si comprimir no encoge el paquete, se envía crudo. |
+| `debug-overlay` | true / false | `false` | Muestra estadísticas zstd (estado, paquetes, ratio) en la vista de ancho de banda del debug (F3 + 3). Solo cliente. |
 
 ## Benchmark zlib vs zstd
 
-> Metodología: micro-benchmark local (JDK 25, zstd-jni **1.5.7-14**) que reproduce exactamente la configuración
+> Metodología: micro-benchmark local (JDK 25, zstd-jni **1.5.7-15**) que reproduce exactamente la configuración
 > del proyecto — zlib `Deflater(nivel 6)` (default vanilla), zstd nivel 3 (default del plugin) con multithread
 > en paquetes ≥ 512 KiB y descompresión zstd de un solo hilo — sobre un corpus sintético reproducible
 > (mezcla 70/30 de datos estilo chunk/entidad y datos incompresibles estilo textura, semilla fija).

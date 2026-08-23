@@ -17,6 +17,12 @@ neoForge {
     }
 }
 
+// The client debug overlay hooks render APIs that changed between eras
+// (GuiGraphics vs GuiGraphicsExtractor), so each build compiles only its own
+// overlay implementation, mirroring the fabric module's layout.
+def overlaySrc = project.minecraft_version.startsWith('26.') ? 'unobfuscated' : 'obfuscated'
+sourceSets.main.java.srcDirs += file("src/${overlaySrc}/java")
+
 dependencies {
     implementation project(':common')
     implementation "com.github.luben:zstd-jni:${project.zstd_version}"

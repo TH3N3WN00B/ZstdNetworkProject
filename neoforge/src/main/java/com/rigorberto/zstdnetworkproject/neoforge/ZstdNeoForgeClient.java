@@ -6,6 +6,7 @@ import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
+import com.rigorberto.zstdnetworkproject.ZstdOverlayStats;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
@@ -25,9 +26,30 @@ public class ZstdNeoForgeClient {
 
     public ZstdNeoForgeClient() {
         settings = loadConfig();
+        ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
         Path configDir = FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject");
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
         NeoForge.EVENT_BUS.register(this);
+        if (settings.isDebugOverlay()) {
+            registerOverlayListener();
+        }
+    }
+
+    /**
+     * The F3+3 overlay must call render APIs that differ between Minecraft eras (GuiGraphics vs
+     * GuiGraphicsExtractor), so each build ships exactly one implementation in an era-specific
+     * source directory and it is loaded reflectively here.
+     */
+    private static void registerOverlayListener() {
+        boolean modern = ReflectionUtil.classExists("net.minecraft.client.gui.GuiGraphicsExtractor");
+        String className = modern
+                ? "com.rigorberto.zstdnetworkproject.neoforge.ZstdNeoForgeOverlayModern"
+                : "com.rigorberto.zstdnetworkproject.neoforge.ZstdNeoForgeOverlayLegacy";
+        try {
+            NeoForge.EVENT_BUS.register(Class.forName(className).getDeclaredConstructor().newInstance());
+        } catch (ReflectiveOperationException e) {
+            LOGGER.warn("Failed to register zstd debug overlay listener", e);
+        }
     }
 
     private static ZstdSettings loadConfig() {
@@ -41,6 +63,7 @@ public class ZstdNeoForgeClient {
 
     @SubscribeEvent
     public void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        ZstdOverlayStats.resetConnection();
         if (!ZstdNative.isAvailable()) {
             return; // Native library missing on this platform: never inject zstd handlers.
         }

@@ -1,0 +1,131 @@
+package com.rigorberto.zstdnetworkproject;
+
+import java.util.Locale;
+import java.util.concurrent.atomic.LongAdder;
+
+/**
+ * Client-side snapshot of compression statistics for the F3+3 bandwidth overlay.
+ *
+ * <p>All values are read from the static {@link LongAdder} counters maintained by
+ * {@link ZstdEncoder} and {@link ZstdDecoder}, so the overlay adds no per-packet cost of its own.
+ * This class is intentionally free of Minecraft imports so it can live in the shared module and be
+ * consumed by every client-side loader (Fabric, NeoForge).
+ */
+public final class ZstdOverlayStats {
+
+    private static volatile boolean enabled;
+    private static volatile boolean zstdObserved;
+
+    private ZstdOverlayStats() {
+    }
+
+    /** Whether the user turned the F3+3 zstd lines on in config.yml (default off). */
+    public static boolean isEnabled() {
+        return enabled;
+    }
+
+    public static void setEnabled(boolean value) {
+        enabled = value;
+    }
+
+    /**
+     * True once at least one zstd frame has been observed on the current connection, which is the
+     * same signal encoders use to start compressing ({@link ZstdCapability}).
+     */
+    public static boolean isZstdActive() {
+        return zstdObserved;
+    }
+
+    /** Called by {@link ZstdCapability#markZstdObserved} when a zstd frame is seen. */
+    public static void noteZstdObserved() {
+        zstdObserved = true;
+    }
+
+    /** Called when a new login starts, so a server without zstd never shows stale state. */
+    public static void resetConnection() {
+        zstdObserved = false;
+    }
+
+    public static long sentPackets() {
+        return ZstdEncoder.PACKETS_COMPRESSED.sum();
+    }
+
+    public static long sentUncompressedBytes() {
+        return ZstdEncoder.INPUT_BYTES.sum();
+    }
+
+    public static long sentCompressedBytes() {
+        return ZstdEncoder.OUTPUT_BYTES.sum();
+    }
+
+    public static long receivedZstdPackets() {
+        return ZstdDecoder.ZSTD_PACKETS.sum();
+    }
+
+    public static long receivedZlibPackets() {
+        return ZstdDecoder.ZLIB_PACKETS.sum();
+    }
+
+    public static long receivedRawPackets() {
+        return ZstdDecoder.RAW_PACKETS.sum();
+    }
+
+    public static long receivedTotalPackets() {
+        return receivedZstdPackets() + receivedZlibPackets() + receivedRawPackets();
+    }
+
+    /**
+     * Average compression ratio achieved on sent packets (uncompressed / compressed), or 0 when
+     * nothing has been compressed yet.
+     */
+    public static double compressionRatio() {
+        long out = sentCompressedBytes();
+        if (out <= 0) {
+            return 0.0;
+        }
+        return (double) sentUncompressedBytes() / out;
+    }
+
+    /** Percentage of bytes saved on sent packets, 0..100 (0 when nothing compressed yet). */
+    public static double savingsPercent() {
+        long in = sentUncompressedBytes();
+        if (in <= 0) {
+            return 0.0;
+        }
+        return 100.0 * (in - sentCompressedBytes()) / in;
+    }
+
+    /** Human-readable byte count using binary units, e.g. {@code 1.5 MiB}. */
+    public static String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        double value = bytes;
+        for (String unit : new String[] {"KiB", "MiB", "GiB"}) {
+            value /= 1024.0;
+            if (value < 1024.0) {
+                return String.format(Locale.ROOT, "%.1f %s", value, unit);
+            }
+        }
+        return String.format(Locale.ROOT, "%.1f TiB", value / 1024.0);
+    }
+
+    /**
+     * The text lines drawn by the F3+3 overlay, styled after the vanilla debug charts' min/avg/max
+     * labels. One line while zstd has not been observed yet, three once it is active.
+     */
+    public static String[] overlayLines() {
+        if (!zstdObserved) {
+            return new String[] {"Zstd: inactive (vanilla zlib)"};
+        }
+        double ratio = compressionRatio();
+        String ratioText = ratio > 0 ? String.format(Locale.ROOT, "%.2fx", ratio) : "n/a";
+        return new String[] {
+                String.format(Locale.ROOT, "Zstd: active, ratio %s (%.0f%% saved)", ratioText, savingsPercent()),
+                "Sent: " + sentPackets() + " pkts, "
+                        + formatBytes(sentUncompressedBytes()) + " -> " + formatBytes(sentCompressedBytes()),
+                "Recv: " + receivedTotalPackets() + " pkts (zstd " + receivedZstdPackets()
+                        + ", zlib " + receivedZlibPackets() + ", raw " + receivedRawPackets() + ")"
+        };
+    }
+}

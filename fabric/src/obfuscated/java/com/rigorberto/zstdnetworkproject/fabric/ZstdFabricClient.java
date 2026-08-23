@@ -6,6 +6,7 @@ import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdNegotiation;
+import com.rigorberto.zstdnetworkproject.ZstdOverlayStats;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
@@ -14,13 +15,17 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectio
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.network.ClientCommonNetworkHandler;
 import net.minecraft.client.network.ClientConfigurationNetworkHandler;
 import net.minecraft.client.network.ClientLoginNetworkHandler;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.network.ClientConnection;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
@@ -42,6 +47,7 @@ public class ZstdFabricClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         settings = loadConfig();
+        ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
         Path configDir = FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject");
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
         ClientLoginConnectionEvents.INIT.register(ZstdFabricClient::onLoginInit);
@@ -49,10 +55,14 @@ public class ZstdFabricClient implements ClientModInitializer {
                 Identifier.tryParse(ZstdNegotiation.CHANNEL), ZstdFabricClient::onLoginQuery);
         ClientConfigurationConnectionEvents.INIT.register(ZstdFabricClient::onConfigurationInit);
         ClientPlayConnectionEvents.JOIN.register(ZstdFabricClient::onJoin);
+        if (settings.isDebugOverlay()) {
+            HudRenderCallback.EVENT.register(ZstdFabricClient::renderOverlay);
+        }
     }
 
     private static void onLoginInit(ClientLoginNetworkHandler handler, MinecraftClient client) {
         negotiated = false;
+        ZstdOverlayStats.resetConnection();
     }
 
     /**
@@ -104,6 +114,29 @@ public class ZstdFabricClient implements ClientModInitializer {
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.warn("Failed to load config.yml, using defaults: {}", e.getMessage());
             return new ZstdSettings();
+        }
+    }
+
+    /**
+     * Draws zstd statistics right above the vanilla F3+3 packet-size chart (bottom-left, same spot
+     * where the chart stacks its min/avg/max labels). Mirrors the vanilla visibility rules: only
+     * while the packet size and ping charts are shown and only for remote servers.
+     */
+    private static void renderOverlay(DrawContext context, RenderTickCounter tickCounter) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player == null || client.isInSingleplayer()) {
+            return;
+        }
+        if (!client.inGameHud.getDebugHud().shouldShowPacketSizeAndPingCharts()) {
+            return;
+        }
+        TextRenderer font = client.textRenderer;
+        int y = client.getWindow().getScaledHeight() - 87;
+        for (String line : ZstdOverlayStats.overlayLines()) {
+            int width = font.getWidth(line);
+            context.fill(1, y - 1, width + 3, y + 8, 0x90202020);
+            context.drawText(font, line, 2, y, 0xFFE0E0E0, false);
+            y -= 9;
         }
     }
 }

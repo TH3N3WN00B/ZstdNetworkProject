@@ -20,6 +20,7 @@ public final class ConfigLoader {
     public static final String KEY_HARDWARE_ACCELERATION_THREADS = "hardware-acceleration-threads";
     public static final String KEY_COMPRESSION_THRESHOLD = "compression-threshold";
     public static final String KEY_COMPRESS_IF_BENEFICIAL = "compress-if-beneficial";
+    public static final String KEY_DEBUG_OVERLAY = "debug-overlay";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
@@ -33,7 +34,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 3;
+    public static final int CONFIG_VERSION = 4;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -71,7 +72,11 @@ public final class ConfigLoader {
             "# Send a packet uncompressed when compression would not actually shrink it.\n" +
             "# Incompressible data (e.g. already-compressed textures or chunk section data)\n" +
             "# can otherwise end up LARGER after zstd than before. Enabled by default.\n" +
-            "compress-if-beneficial: true"
+            "compress-if-beneficial: true",
+            "# Show zstd statistics (status, packets, compression ratio) in the client\n" +
+            "# debug screen bandwidth view (F3 + 3). Client-side only.\n" +
+            "# Disabled by default.\n" +
+            "debug-overlay: false"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -116,6 +121,7 @@ public final class ConfigLoader {
         settings.setCompressionThreshold(Math.max(MIN_COMPRESSION_THRESHOLD,
                 parseInt(values.get(KEY_COMPRESSION_THRESHOLD), ZstdSettings.MIN_COMPRESSION_THRESHOLD)));
         settings.setCompressIfBeneficial(parseBoolean(values.get(KEY_COMPRESS_IF_BENEFICIAL), true));
+        settings.setDebugOverlay(parseBoolean(values.get(KEY_DEBUG_OVERLAY), false));
         return settings;
     }
 

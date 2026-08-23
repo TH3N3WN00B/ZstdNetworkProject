@@ -28,4 +28,14 @@ public final class ReflectionUtil {
     public static Object getFieldValue(Object target, String name) throws IllegalAccessException, NoSuchFieldException {
         return findField(target, name).get(target);
     }
+
+    /** True when the class is loadable in the current runtime, false when absent (era detection). */
+    public static boolean classExists(String className) {
+        try {
+            Class.forName(className, false, ReflectionUtil.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
 }

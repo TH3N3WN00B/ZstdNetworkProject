@@ -28,6 +28,7 @@ public final class ZstdSettings {
     private int hardwareAccelerationThreads;
     private int compressionThreshold = MIN_COMPRESSION_THRESHOLD;
     private boolean compressIfBeneficial = true;
+    private boolean debugOverlay;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -95,6 +96,15 @@ public final class ZstdSettings {
 
     public void setCompressIfBeneficial(boolean compressIfBeneficial) {
         this.compressIfBeneficial = compressIfBeneficial;
+    }
+
+    /** Whether the client draws zstd statistics in the F3+3 bandwidth view (default off). */
+    public boolean isDebugOverlay() {
+        return debugOverlay;
+    }
+
+    public void setDebugOverlay(boolean debugOverlay) {
+        this.debugOverlay = debugOverlay;
     }
 
     /**

@@ -41,5 +41,6 @@ public final class ZstdCapability {
             }
         }
         flag.set(true);
+        ZstdOverlayStats.noteZstdObserved();
     }
 }
