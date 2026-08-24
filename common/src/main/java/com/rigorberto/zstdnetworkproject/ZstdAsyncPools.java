@@ -40,6 +40,12 @@ public final class ZstdAsyncPools {
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "zstd-codec-worker-" + counter.incrementAndGet());
             thread.setDaemon(true);
+            // Below-normal priority: Windows actually honors Java thread priorities (they map to
+            // Win32 priority classes, unlike Linux/macOS which mostly ignore them), so this keeps
+            // large-packet (de)compression from stealing CPU from the game/render threads on the
+            // typical 4-8 core desktop. Compression latency impact is negligible next to the
+            // smoothness gain.
+            thread.setPriority(Thread.NORM_PRIORITY - 1);
             return thread;
         };
         EXECUTOR = Executors.newFixedThreadPool(WORKER_COUNT, factory);
