@@ -19,6 +19,14 @@ final class ZstdCodecCtx {
             ThreadLocal.withInitial(ZstdDecompressCtx::new);
     private static final ThreadLocal<byte[]> SCRATCH =
             ThreadLocal.withInitial(() -> new byte[16 * 1024]);
+
+    /**
+     * Cached scratch buffers stop growing beyond this size: larger requests get a transient array
+     * instead of permanently enlarging the thread-local. Without the cap a single huge frame (the
+     * decoder accepts declared sizes up to 64 MiB) would pin an equally huge array on every thread
+     * that touched it for the rest of its life, which is easy memory pressure in small containers.
+     */
+    private static final int MAX_CACHED_SCRATCH = 4 * 1024 * 1024;
     private static final ThreadLocal<Deflater> DEFLATER =
             ThreadLocal.withInitial(Deflater::new);
 
@@ -47,10 +55,16 @@ final class ZstdCodecCtx {
 
     static byte[] scratch(int needed) {
         byte[] buf = SCRATCH.get();
-        if (buf.length < needed) {
-            buf = new byte[needed];
-            SCRATCH.set(buf);
+        if (buf.length >= needed) {
+            return buf;
         }
+        if (needed > MAX_CACHED_SCRATCH) {
+            // Transient buffer: garbage-collected right after this frame instead of being
+            // retained forever in the thread-local.
+            return new byte[needed];
+        }
+        buf = new byte[needed];
+        SCRATCH.set(buf);
         return buf;
     }
 

@@ -16,12 +16,20 @@ dependencies {
     runtimeOnly "io.papermc.paper:paper-api:${project.paper_version}"
 }
 
+processResources {
+    def ver = project.version.toString()
+    filesMatching('plugin.yml') {
+        expand 'version': ver
+    }
+}
+
 jar {
     dependsOn project(':common').jar
     manifest {
         attributes(
             'Main-Class': 'com.rigorberto.zstdnetworkproject.paper.ZstdNetworkProjectPaper',
-            'Plugin-Version': project.version
+            'Plugin-Version': project.version,
+            'Implementation-Version': project.version
         )
     }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE

@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
     id = "zstdnetworkproject",
     name = "ZstdNetworkProject",
-    version = "beta-0.2",
+    version = "beta-0.6",
     description = "Zstd packet compressor for Velocity proxy (compatible with Krypton & PacketFixer)",
     authors = {"Rigorberto"}
 )
@@ -103,9 +103,15 @@ public class ZstdNetworkProjectVelocity {
         settings = loadConfig();
         StartupBanner.print();
         if (!ZstdNative.isAvailable()) {
+            String osName = System.getProperty("os.name", "unknown");
             logger.warn("zstd native library is not available on this platform ({} {}); "
                             + "zstd compression is disabled, all players will use vanilla zlib.",
-                    System.getProperty("os.name"), System.getProperty("os.arch"));
+                    osName, System.getProperty("os.arch"));
+            if (osName.toLowerCase(java.util.Locale.ROOT).contains("linux")) {
+                logger.warn("On Alpine/musl-based Docker images the bundled zstd-jni natives (glibc) "
+                        + "may fail to load: install the 'java-zstd-jni' system package or switch to "
+                        + "a glibc-based image to enable zstd.");
+            }
             return;
         }
         logger.info("zstd compression enabled: {}, compression-level={}, compression-threshold={} bytes, "

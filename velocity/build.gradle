@@ -27,12 +27,20 @@ dependencies {
     runtimeOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
 }
 
+processResources {
+    def ver = project.version.toString()
+    filesMatching('velocity-plugin.json') {
+        expand 'version': ver
+    }
+}
+
 jar {
     dependsOn project(':common').jar
     manifest {
         attributes(
             'Main-Class': 'com.rigorberto.zstdnetworkproject.velocity.ZstdNetworkProjectVelocity',
-            'Plugin-Version': project.version
+            'Plugin-Version': project.version,
+            'Implementation-Version': project.version
         )
     }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE

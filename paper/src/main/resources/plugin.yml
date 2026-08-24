@@ -1,5 +1,5 @@
 name: ZstdNetworkProject
-version: beta-0.2
+version: ${version}
 main: com.rigorberto.zstdnetworkproject.paper.ZstdNetworkProjectPaper
 api-version: 1.21
 author: Rigorberto
