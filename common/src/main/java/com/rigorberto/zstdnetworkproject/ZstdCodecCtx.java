@@ -13,8 +13,31 @@ import java.util.zip.Deflater;
  */
 final class ZstdCodecCtx {
 
-    private static final ThreadLocal<ZstdCompressCtx> COMPRESS =
-            ThreadLocal.withInitial(ZstdCompressCtx::new);
+    private static final class CompressHolder {
+        final ZstdCompressCtx ctx = new ZstdCompressCtx();
+        int lastLevel = Integer.MIN_VALUE;
+        int lastWorkers = Integer.MIN_VALUE;
+
+        ZstdCompressCtx get(int level, int workers) {
+            if (lastLevel != level) {
+                ctx.setLevel(level);
+                lastLevel = level;
+            }
+            if (lastWorkers != workers) {
+                try {
+                    ctx.setWorkers(workers);
+                    lastWorkers = workers;
+                } catch (Throwable t) {
+                    ctx.setWorkers(0);
+                    lastWorkers = 0;
+                }
+            }
+            return ctx;
+        }
+    }
+
+    private static final ThreadLocal<CompressHolder> COMPRESS =
+            ThreadLocal.withInitial(CompressHolder::new);
     private static final ThreadLocal<ZstdDecompressCtx> DECOMPRESS =
             ThreadLocal.withInitial(ZstdDecompressCtx::new);
     private static final ThreadLocal<byte[]> SCRATCH =
@@ -34,15 +57,7 @@ final class ZstdCodecCtx {
     }
 
     static ZstdCompressCtx compress(int level, int workers) {
-        ZstdCompressCtx ctx = COMPRESS.get();
-        ctx.setLevel(level);
-        try {
-            ctx.setWorkers(workers);
-        } catch (Throwable t) {
-            // zstd-jni built without multithreading support: fall back to single-threaded.
-            ctx.setWorkers(0);
-        }
-        return ctx;
+        return COMPRESS.get().get(level, workers);
     }
 
     static ZstdDecompressCtx decompress() {

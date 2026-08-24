@@ -85,6 +85,15 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         throw new UnsupportedOperationException("encode is not used; write() is overridden");
     }
 
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        try {
+            super.handlerRemoved(ctx);
+        } finally {
+            processor.discardAll();
+        }
+    }
+
     private void ensureCloseCleanup(ChannelHandlerContext ctx) {
         if (closeCleanupAttached) {
             return;
@@ -94,12 +103,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     }
 
     private static int varIntLength(int value) {
-        int length = 1;
-        while ((value & ~0x7F) != 0) {
-            value >>>= 7;
-            length++;
-        }
-        return length;
+        return ZstdEncoder.varIntLength(value);
     }
 
     /**
@@ -115,7 +119,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     /** Encodes a sub-threshold packet as {@code varint(len+1), 0x00, raw}. Releases {@code msg}. */
     private static void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int uncompressed, ChannelPromise promise) {
         int sizeVarIntLength = varIntLength(uncompressed + 1);
-        ByteBuf out = ctx.alloc().buffer(sizeVarIntLength + 1 + uncompressed);
+        ByteBuf out = ctx.alloc().directBuffer(sizeVarIntLength + 1 + uncompressed);
         ZstdEncoder.writeVarInt(out, uncompressed + 1);
         out.writeByte(0);
         out.writeBytes(msg);
@@ -149,36 +153,25 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         int bound = ZstdCodecCtx.compressBound(uncompressed);
         int sizeVarIntLength = varIntLength(uncompressed);
 
+        ByteBuf out = ctx.alloc().directBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength + bound);
+        ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
+        ByteBuffer src;
         if (in.isDirect()) {
-            ByteBuf out = ctx.alloc().directBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength + bound);
-            ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
-            int size = zctx.compress(dst, in.nioBuffer());
-            if (size < 0) {
-                out.release();
-                throw new IllegalStateException("zstd compression failed: " + size);
-            }
-            return finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
+            src = in.nioBuffer();
+        } else if (in.hasArray()) {
+            src = ByteBuffer.wrap(in.array(), in.arrayOffset() + in.readerIndex(), uncompressed);
+        } else {
+            byte[] input = ZstdCodecCtx.scratch(uncompressed);
+            in.getBytes(in.readerIndex(), input, 0, uncompressed);
+            src = ByteBuffer.wrap(input, 0, uncompressed);
         }
 
-        byte[] input = new byte[uncompressed];
-        in.getBytes(in.readerIndex(), input);
-        byte[] dstArr = ZstdCodecCtx.scratch(bound);
-        int size = zctx.compress(dstArr, input);
+        int size = zctx.compress(dst, src);
         if (size < 0) {
+            out.release();
             throw new IllegalStateException("zstd compression failed: " + size);
         }
-        if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
-            ByteBuf out = rawAlloc(ctx, uncompressed);
-            out.writeByte(0);
-            out.writeBytes(input);
-            OUTPUT_BYTES.add(out.readableBytes());
-            return out;
-        }
-        ByteBuf out = allocCompressed(ctx, uncompressed, size);
-        out.writeBytes(dstArr, 0, size);
-        PACKETS_COMPRESSED.increment();
-        OUTPUT_BYTES.add(out.readableBytes());
-        return out;
+        return finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
     }
 
     /**
@@ -189,8 +182,8 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
      * no copy is performed.
      */
     private static ByteBuf finishFrame(ByteBuf out, int size, int sizeVarIntLength,
-                                       ChannelHandlerContext ctx, ByteBuf in, int uncompressed,
-                                       ZstdSettings settings) {
+                                        ChannelHandlerContext ctx, ByteBuf in, int uncompressed,
+                                        ZstdSettings settings) {
         if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
             out.release();
             ByteBuf raw = rawAlloc(ctx, uncompressed);
@@ -253,17 +246,8 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
 
     private static ByteBuf rawAlloc(ChannelHandlerContext ctx, int uncompressed) {
         int sizeVarIntLength = varIntLength(uncompressed + 1);
-        ByteBuf out = ctx.alloc().buffer(sizeVarIntLength + 1 + uncompressed);
+        ByteBuf out = ctx.alloc().directBuffer(sizeVarIntLength + 1 + uncompressed);
         ZstdEncoder.writeVarInt(out, uncompressed + 1);
-        return out;
-    }
-
-    private static ByteBuf allocCompressed(ChannelHandlerContext ctx, int uncompressed, int compressedSize) {
-        int sizeVarIntLength = varIntLength(uncompressed);
-        int frameLength = sizeVarIntLength + compressedSize;
-        ByteBuf out = ctx.alloc().buffer(varIntLength(frameLength) + frameLength);
-        ZstdEncoder.writeVarInt(out, frameLength);
-        ZstdEncoder.writeVarInt(out, uncompressed);
         return out;
     }
 

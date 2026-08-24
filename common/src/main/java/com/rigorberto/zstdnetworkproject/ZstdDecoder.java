@@ -132,6 +132,15 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     }
 
     @Override
+    protected void handlerRemoved0(ChannelHandlerContext ctx) throws Exception {
+        try {
+            super.handlerRemoved0(ctx);
+        } finally {
+            processor.discardAll();
+        }
+    }
+
+    @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         try {
             super.channelInactive(ctx);
@@ -152,6 +161,9 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             int n;
             if (in.isDirect()) {
                 n = zctx.decompress(dst, in.nioBuffer());
+            } else if (in.hasArray()) {
+                n = zctx.decompressByteArrayToDirectByteBuffer(
+                        dst, 0, size, in.array(), in.arrayOffset() + in.readerIndex(), in.readableBytes());
             } else {
                 int len = in.readableBytes();
                 byte[] src = ZstdCodecCtx.scratch(len);
@@ -256,11 +268,9 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         Inflater inflater = INFLATER_THREAD_LOCAL.get();
         int n;
         try {
-            synchronized (inflater) {
-                inflater.reset();
-                inflater.setInput(input);
-                n = inflater.inflate(dst);
-            }
+            inflater.reset();
+            inflater.setInput(input);
+            n = inflater.inflate(dst);
         } catch (DataFormatException e) {
             String detail = zlibFailureDetail(input, size, e.toString());
             TraceDump.dump("client-decode", detail);

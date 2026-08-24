@@ -8,6 +8,7 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.zip.Deflater;
 
 /**
  * Minecraft compression encoder: writes VarInt(uncompressedSize) followed by the zstd-compressed
@@ -111,6 +112,15 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         throw new UnsupportedOperationException("encode is not used; write() is overridden");
     }
 
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        try {
+            super.handlerRemoved(ctx);
+        } finally {
+            processor.discardAll();
+        }
+    }
+
     private void ensureCloseCleanup(ChannelHandlerContext ctx) {
         if (closeCleanupAttached) {
             return;
@@ -135,13 +145,20 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         buf.setByte(index, value);
     }
 
-    private static int varIntLength(int value) {
-        int length = 1;
-        while ((value & ~0x7F) != 0) {
-            value >>>= 7;
-            length++;
+    public static int varIntLength(int value) {
+        if ((value & (0xFFFFFFFF << 7)) == 0) {
+            return 1;
         }
-        return length;
+        if ((value & (0xFFFFFFFF << 14)) == 0) {
+            return 2;
+        }
+        if ((value & (0xFFFFFFFF << 21)) == 0) {
+            return 3;
+        }
+        if ((value & (0xFFFFFFFF << 28)) == 0) {
+            return 4;
+        }
+        return 5;
     }
 
     /**
@@ -154,7 +171,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
 
     /** Encodes a sub-threshold packet as {@code varint(0) + raw}. Releases {@code msg}. */
     private static void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int readable, ChannelPromise promise) {
-        ByteBuf out = ctx.alloc().buffer(readable + 5);
+        ByteBuf out = ctx.alloc().directBuffer(1 + readable);
         writeVarInt(out, 0);
         out.writeBytes(msg);
         OUTPUT_BYTES.add(out.readableBytes());
@@ -165,18 +182,25 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     /** Vanilla-compatible zlib fallback: {@code varint(uncompressedSize) + zlib stream}. Releases {@code in}. */
     private static void writeZlib(ChannelHandlerContext ctx, ByteBuf in, int readable, ChannelPromise promise) {
         try {
-            byte[] input = new byte[readable];
-            in.getBytes(in.readerIndex(), input);
-            java.util.zip.Deflater deflater = ZstdCodecCtx.deflater();
+            Deflater deflater = ZstdCodecCtx.deflater();
             deflater.reset();
-            deflater.setInput(input);
+            if (in.hasArray()) {
+                deflater.setInput(in.array(), in.arrayOffset() + in.readerIndex(), readable);
+            } else {
+                byte[] input = new byte[readable];
+                in.getBytes(in.readerIndex(), input);
+                deflater.setInput(input);
+            }
             deflater.finish();
-            byte[] dst = ZstdCodecCtx.scratch(ZstdCodecCtx.deflateBound(readable));
+            int bound = ZstdCodecCtx.deflateBound(readable);
+            int varIntLen = varIntLength(readable);
+            ByteBuf out = ctx.alloc().directBuffer(varIntLen + bound);
+            byte[] dst = ZstdCodecCtx.scratch(bound);
             int size = deflater.deflate(dst);
             if (size <= 0) {
+                out.release();
                 throw new IllegalStateException("zlib compression failed: " + size);
             }
-            ByteBuf out = ctx.alloc().buffer(varIntLength(readable) + size);
             writeVarInt(out, readable);
             out.writeBytes(dst, 0, size);
             PACKETS_COMPRESSED.increment();
@@ -214,46 +238,34 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         int bound = ZstdCodecCtx.compressBound(readable);
         int varIntLength = varIntLength(readable);
 
+        ByteBuf out = ctx.alloc().directBuffer(varIntLength + bound);
+        ByteBuffer dst = out.nioBuffer(varIntLength, bound);
+        ByteBuffer src;
         if (in.isDirect()) {
-            ByteBuf out = ctx.alloc().directBuffer(varIntLength + bound);
-            ByteBuffer dst = out.nioBuffer(varIntLength, bound);
-            ByteBuffer src = in.nioBuffer();
-            int size = zctx.compress(dst, src);
-            if (size < 0) {
-                out.release();
-                throw new IllegalStateException("zstd compression failed: " + size);
-            }
-            out.writerIndex(varIntLength + size);
-            writeVarIntAt(out, 0, readable);
-            if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-                out.clear();
-                writeVarInt(out, 0);
-                out.writeBytes(in, in.readerIndex(), readable);
-            } else {
-                PACKETS_COMPRESSED.increment();
-            }
-            OUTPUT_BYTES.add(out.readableBytes());
-            return out;
+            src = in.nioBuffer();
+        } else if (in.hasArray()) {
+            src = ByteBuffer.wrap(in.array(), in.arrayOffset() + in.readerIndex(), readable);
+        } else {
+            byte[] input = ZstdCodecCtx.scratch(readable);
+            in.getBytes(in.readerIndex(), input, 0, readable);
+            src = ByteBuffer.wrap(input, 0, readable);
         }
 
-        byte[] input = new byte[readable];
-        in.getBytes(in.readerIndex(), input);
-        byte[] dstArr = ZstdCodecCtx.scratch(bound);
-        int size = zctx.compress(dstArr, input);
+        int size = zctx.compress(dst, src);
         if (size < 0) {
+            out.release();
             throw new IllegalStateException("zstd compression failed: " + size);
         }
+
+        out.writerIndex(varIntLength + size);
+        writeVarIntAt(out, 0, readable);
         if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-            ByteBuf out = ctx.alloc().buffer(1 + readable);
+            out.clear();
             writeVarInt(out, 0);
-            out.writeBytes(input);
-            OUTPUT_BYTES.add(out.readableBytes());
-            return out;
+            out.writeBytes(in, in.readerIndex(), readable);
+        } else {
+            PACKETS_COMPRESSED.increment();
         }
-        ByteBuf out = ctx.alloc().buffer(varIntLength + size);
-        writeVarInt(out, readable);
-        out.writeBytes(dstArr, 0, size);
-        PACKETS_COMPRESSED.increment();
         OUTPUT_BYTES.add(out.readableBytes());
         return out;
     }

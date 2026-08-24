@@ -46,16 +46,28 @@ public final class StatsLogger {
                 long curZlib = ZstdDecoder.ZLIB_PACKETS.sum();
                 long curRaw = ZstdDecoder.RAW_PACKETS.sum();
 
+                long deltaEncComp = curEncCompressed - encCompressed;
+                long deltaEncIn = curEncIn - encIn;
+                long deltaEncOut = curEncOut - encOut;
+                long deltaZstd = curZstd - zstd;
+                long deltaZstdBytes = curZstdBytes - zstdBytes;
+                long deltaZlib = curZlib - zlib;
+                long deltaRaw = curRaw - raw;
+
+                if (deltaEncComp == 0 && deltaEncIn == 0 && deltaZstd == 0 && deltaZlib == 0 && deltaRaw == 0) {
+                    continue;
+                }
+
                 String line = String.format(
                         "%s encode: +%d pkts (+%s -> +%s) | decode zstd: +%d pkts (+%s), zlib fallback: +%d, raw: +%d | level %d | zstd active: %s",
                         LocalDateTime.now().format(TIMESTAMP),
-                        curEncCompressed - encCompressed,
-                        formatBytes(curEncIn - encIn),
-                        formatBytes(curEncOut - encOut),
-                        curZstd - zstd,
-                        formatBytes(curZstdBytes - zstdBytes),
-                        curZlib - zlib,
-                        curRaw - raw,
+                        deltaEncComp,
+                        formatBytes(deltaEncIn),
+                        formatBytes(deltaEncOut),
+                        deltaZstd,
+                        formatBytes(deltaZstdBytes),
+                        deltaZlib,
+                        deltaRaw,
                         compressionLevel,
                         curZstd > 0 ? "YES" : "NO");
 

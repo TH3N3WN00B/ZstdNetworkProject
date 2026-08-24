@@ -136,18 +136,20 @@ public final class HexDump {
         }
     }
 
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
+
     /** Classic 16-bytes-per-row dump: offset, hex pairs and printable ASCII gutter. */
     private static String hexBlock(byte[] data) {
         StringBuilder sb = new StringBuilder(data.length * 4 + 64);
         for (int row = 0; row < data.length; row += 16) {
-            sb.append(String.format("%08x  ", row));
+            appendHex8(sb, row);
+            sb.append("  ");
             for (int i = 0; i < 16; i++) {
                 if (row + i < data.length) {
                     int b = data[row + i] & 0xFF;
-                    if (b < 0x10) {
-                        sb.append('0');
-                    }
-                    sb.append(Integer.toHexString(b)).append(i == 7 ? '-' : ' ');
+                    sb.append(HEX_CHARS[(b >>> 4) & 0x0F]);
+                    sb.append(HEX_CHARS[b & 0x0F]);
+                    sb.append(i == 7 ? '-' : ' ');
                 } else {
                     sb.append("   ");
                 }
@@ -160,5 +162,11 @@ public final class HexDump {
             sb.append(System.lineSeparator());
         }
         return sb.toString();
+    }
+
+    private static void appendHex8(StringBuilder sb, int value) {
+        for (int i = 28; i >= 0; i -= 4) {
+            sb.append(HEX_CHARS[(value >>> i) & 0x0F]);
+        }
     }
 }

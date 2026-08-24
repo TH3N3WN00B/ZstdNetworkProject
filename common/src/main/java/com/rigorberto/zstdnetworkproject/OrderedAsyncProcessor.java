@@ -42,25 +42,31 @@ final class OrderedAsyncProcessor {
         drain(ctx);
     }
 
-    private void drain(ChannelHandlerContext ctx) {
+    private boolean drain(ChannelHandlerContext ctx) {
+        boolean processedSync = false;
         while (!queue.isEmpty() && !inFlight) {
             Work work = queue.peekFirst();
             if (!work.isAsync()) {
                 queue.pollFirst();
                 work.processSync();
+                processedSync = true;
             } else {
                 inFlight = true;
                 queue.pollFirst();
                 work.submitAsync();
-                return;
+                return processedSync;
             }
         }
+        return processedSync;
     }
 
     /** Must be called on the event loop after an asynchronous unit completes. */
     void onAsyncComplete(ChannelHandlerContext ctx) {
         inFlight = false;
-        drain(ctx);
+        boolean processedSync = drain(ctx);
+        if (processedSync && ctx.channel().isActive()) {
+            ctx.flush();
+        }
     }
 
     void discardAll() {
