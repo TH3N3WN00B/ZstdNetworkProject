@@ -52,6 +52,27 @@ public final class ClientPipelineInjector {
         return runOnEventLoop(channel, settings, PipelineInjector::injectDecoder);
     }
 
+    /**
+     * Best-effort {@code host:port} string for the remote peer of a client channel, used for
+     * matching against the {@code disabled-servers} config. Falls back to the raw address text.
+     */
+    public static String remoteAddress(Channel channel) {
+        try {
+            java.net.SocketAddress address = channel.remoteAddress();
+            if (address instanceof java.net.InetSocketAddress inet && inet.getAddress() != null) {
+                String host = inet.getHostString();
+                int port = inet.getPort();
+                boolean needsBrackets = host.indexOf(':') >= 0;
+                return needsBrackets ? "[" + host + "]:" + port : host + ":" + port;
+            }
+            if (address != null) {
+                return address.toString();
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
     private static boolean runOnEventLoop(Object connection, ZstdSettings settings,
                                           ChannelInjector injection) throws Exception {
         return runOnEventLoop(getChannel(connection), settings, injection);

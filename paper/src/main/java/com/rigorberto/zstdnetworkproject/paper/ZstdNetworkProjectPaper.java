@@ -2,6 +2,7 @@ package com.rigorberto.zstdnetworkproject.paper;
 
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
+import com.rigorberto.zstdnetworkproject.HexDump;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StartupBanner;
@@ -22,6 +23,10 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         settings = loadConfig();
+        HexDump.configure(getDataFolder().toPath().resolve("zstd-hexdump.log"), settings.isHexDump());
+        if (HexDump.isEnabled()) {
+            getLogger().info("hex-dump enabled: frames are being written to " + getDataFolder().toPath().resolve("zstd-hexdump.log"));
+        }
         getServer().getPluginManager().registerEvents(this, this);
         StartupBanner.print();
     }
@@ -63,8 +68,31 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener {
             return;
         }
         Object channelValue = ReflectionUtil.getFieldValue(nettyConnection, "channel");
-        if (channelValue instanceof Channel) {
-            PipelineInjector.inject((Channel) channelValue, settings);
+        if (channelValue instanceof Channel channel) {
+            boolean replaced = PipelineInjector.inject(channel, settings);
+            if (HexDump.isEnabled()) {
+                HexDump.note("pipeline", "post-inject replaced=" + replaced
+                        + " peer=" + channel.remoteAddress() + ": " + handlerList(channel));
+            }
+            if (!replaced) {
+                getLogger().warning("No compression handlers were found/replaced on "
+                        + player.getName() + "'s pipeline (server fork may use different handler names)");
+                ErrorLogger.log(getDataFolder().toPath().resolve("zstd-errors.log"),
+                        "Pipeline handlers after failed inject for " + player.getName(),
+                        new IllegalStateException(handlerList(channel)));
+            }
         }
+    }
+
+    /** Names + classes of every Netty handler in the pipeline, for diagnosing custom forks. */
+    private static String handlerList(Channel channel) {
+        StringBuilder sb = new StringBuilder(256);
+        try {
+            channel.pipeline().forEach(entry -> sb.append(entry.getKey()).append('(')
+                    .append(entry.getValue().getClass().getName()).append(") "));
+        } catch (Exception e) {
+            sb.append("<pipeline read failed: ").append(e).append('>');
+        }
+        return sb.toString().trim();
     }
 }

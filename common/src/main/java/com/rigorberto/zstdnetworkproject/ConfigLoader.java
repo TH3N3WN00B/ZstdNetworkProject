@@ -21,6 +21,9 @@ public final class ConfigLoader {
     public static final String KEY_COMPRESSION_THRESHOLD = "compression-threshold";
     public static final String KEY_COMPRESS_IF_BENEFICIAL = "compress-if-beneficial";
     public static final String KEY_DEBUG_OVERLAY = "debug-overlay";
+    public static final String KEY_DISABLED_SERVERS = "disabled-servers";
+    public static final String KEY_AUTO_DISABLE_MODS = "auto-disable-mods";
+    public static final String KEY_HEX_DUMP = "hex-dump";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
@@ -34,7 +37,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 4;
+    public static final int CONFIG_VERSION = 7;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -76,7 +79,24 @@ public final class ConfigLoader {
             "# Show zstd statistics (status, packets, compression ratio) in the client\n" +
             "# debug screen bandwidth view (F3 + 3). Client-side only.\n" +
             "# Disabled by default.\n" +
-            "debug-overlay: false"
+            "debug-overlay: false",
+            "# Servers where this mod stays completely passive (pure vanilla behavior).\n" +
+            "# Some servers use custom network protocol patchers that break when their\n" +
+            "# compression handlers are replaced. Entries are comma-separated substrings\n" +
+            "# matched against the server address (host or host:port), e.g.\n" +
+            "\"disabled-servers\": \"play.example.com, 10.0.0.5:25565\"\n" +
+            "disabled-servers: ",
+            "# Mods whose presence makes this mod stay completely passive (pure vanilla\n" +
+            "# behavior). Network-protocol patcher mods (e.g. FNP Patcher, required by some\n" +
+            "# custom server forks) replace the same compression handlers this mod does, so\n" +
+            "# both being active breaks logins on those servers. Entries are mod ids,\n" +
+            "# comma-separated.\n" +
+            "auto-disable-mods: fnp_patcher",
+            "# Dump every frame crossing the compression encoder/decoder to zstd-hexdump.log\n" +
+            "# (sizes, direction, peer address and full hex). Only for diagnosing protocol\n" +
+            "# problems with custom servers; adds I/O overhead and grows the log fast.\n" +
+            "# Disabled by default.\n" +
+            "hex-dump: false"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -122,7 +142,28 @@ public final class ConfigLoader {
                 parseInt(values.get(KEY_COMPRESSION_THRESHOLD), ZstdSettings.MIN_COMPRESSION_THRESHOLD)));
         settings.setCompressIfBeneficial(parseBoolean(values.get(KEY_COMPRESS_IF_BENEFICIAL), true));
         settings.setDebugOverlay(parseBoolean(values.get(KEY_DEBUG_OVERLAY), false));
+        settings.setDisabledServers(parseList(values.get(KEY_DISABLED_SERVERS)));
+        String autoDisableMods = values.get(KEY_AUTO_DISABLE_MODS);
+        settings.setAutoDisableMods(autoDisableMods == null
+                ? ZstdSettings.DEFAULT_AUTO_DISABLE_MODS
+                : parseList(autoDisableMods));
+        settings.setHexDump(parseBoolean(values.get(KEY_HEX_DUMP), false));
         return settings;
+    }
+
+    /** Parses a comma-separated setting value into a list of trimmed, non-empty entries. */
+    private static List<String> parseList(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        List<String> entries = new ArrayList<>();
+        for (String entry : value.split(",")) {
+            String trimmed = entry.trim();
+            if (!trimmed.isEmpty()) {
+                entries.add(trimmed);
+            }
+        }
+        return entries;
     }
 
     /**

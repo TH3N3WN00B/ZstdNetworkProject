@@ -74,6 +74,10 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         ByteBuf in = (ByteBuf) msg;
         int readable = in.readableBytes();
         INPUT_BYTES.add(readable);
+        if (HexDump.isEnabled()) {
+            HexDump.dump("frame-out", "OUT packet threshold=" + settings.getCompressionThreshold()
+                    + " peer=" + HexDump.peerOf(ctx), in);
+        }
 
         if (readable < settings.getCompressionThreshold()) {
             if (processor.isIdle()) {

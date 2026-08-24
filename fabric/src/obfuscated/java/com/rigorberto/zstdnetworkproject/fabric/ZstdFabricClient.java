@@ -2,6 +2,7 @@ package com.rigorberto.zstdnetworkproject.fabric;
 
 import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
+import com.rigorberto.zstdnetworkproject.HexDump;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
@@ -47,8 +48,15 @@ public class ZstdFabricClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         settings = loadConfig();
+        String blockingMod = settings.findLoadedAutoDisableMod(FabricLoader.getInstance()::isModLoaded);
+        if (blockingMod != null) {
+            ZstdNetworkProjectFabric.LOGGER.info(
+                    "ZstdNetworkProject stays passive because '{}' is installed (auto-disable-mods config)", blockingMod);
+            return;
+        }
         ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
         Path configDir = FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject");
+        HexDump.configure(configDir.resolve("zstd-hexdump.log"), settings.isHexDump());
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
         ClientLoginConnectionEvents.INIT.register(ZstdFabricClient::onLoginInit);
         ClientLoginNetworking.registerGlobalReceiver(
@@ -70,22 +78,45 @@ public class ZstdFabricClient implements ClientModInitializer {
      * response, so answering means the server-side peer will be speaking zstd.
      */
     private static CompletableFuture<PacketByteBuf> onLoginQuery(MinecraftClient client,
-                                                                 ClientLoginNetworkHandler handler,
-                                                                 PacketByteBuf buf,
-                                                                 Consumer<?> sender) {
-        if (!ZstdNative.isAvailable()) {
-            return null; // NAK: no zstd native on this platform, keep vanilla zlib.
+                                                                  ClientLoginNetworkHandler handler,
+                                                                  PacketByteBuf buf,
+                                                                  Consumer<?> sender) {
+        if (!ZstdNative.isAvailable() || isDisabled(handler)) {
+            return null; // NAK: no zstd native on this platform, or this server must stay vanilla.
         }
         negotiated = true;
         return CompletableFuture.completedFuture(
                 new PacketByteBuf(Unpooled.wrappedBuffer(ZstdNegotiation.queryPayload())));
     }
 
+    /** True when the remote address matches the disabled-servers config: stay fully passive. */
+    private static boolean isDisabled(Object handler) {
+        try {
+            Channel channel = ClientPipelineInjector.getChannel(ClientPipelineInjector.getConnection(handler));
+            if (channel == null) {
+                return false;
+            }
+            boolean disabled = settings.isServerDisabled(ClientPipelineInjector.remoteAddress(channel));
+            if (disabled) {
+                ZstdNetworkProjectFabric.LOGGER.info("ZstdNetworkProject is disabled for this server (disabled-servers config)");
+            }
+            return disabled;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static void onConfigurationInit(ClientConfigurationNetworkHandler handler, MinecraftClient client) {
+        if (isDisabled(handler)) {
+            return;
+        }
         tryInject(handler, ClientPipelineInjector::injectDecoder);
     }
 
     private static void onJoin(ClientPlayNetworkHandler handler, PacketSender sender, MinecraftClient client) {
+        if (isDisabled(handler)) {
+            return;
+        }
         if (negotiated && handler.connection != null) {
             ZstdCapability.markZstdObserved(handler.connection.channel);
         }

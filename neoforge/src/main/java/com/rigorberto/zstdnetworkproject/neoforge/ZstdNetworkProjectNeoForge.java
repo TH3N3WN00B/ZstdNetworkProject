@@ -2,6 +2,7 @@ package com.rigorberto.zstdnetworkproject.neoforge;
 
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
+import com.rigorberto.zstdnetworkproject.HexDump;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StartupBanner;
@@ -25,6 +26,8 @@ public class ZstdNetworkProjectNeoForge {
     public ZstdNetworkProjectNeoForge() {
         NeoForge.EVENT_BUS.register(this);
         settings = loadConfig();
+        HexDump.configure(FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject").resolve("zstd-hexdump.log"),
+                settings.isHexDump());
         StartupBanner.print();
         if (isClientDist()) {
             NeoForge.EVENT_BUS.register(new ZstdNeoForgeClient());

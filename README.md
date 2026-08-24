@@ -32,6 +32,10 @@ menor coste de CPU** (ver [benchmark](#benchmark-zlib-vs-zstd)), compatible con 
   - En **servidor/cliente** el encoder solo cambia a zstd cuando el otro extremo demuestra que puede decodificarlo;
     todos los decoders detectan la cabecera del frame zstd (`28 B5 2F FD`) y aceptan ambos formatos.
 - **Compatibilidad** con proxy **Krypton** y **PacketFixer** (misma técnica de sustitución de handlers).
+  - Si hay instalado un mod parcheador de protocolo incompatible (p. ej. **FNP Patcher**, requerido por algunos
+    forks de servidor personalizados), el mod se auto-desactiva (`auto-disable-mods`) para no romper el login.
+  - Tolera servidores/proxies no vanilla que omiten la cabecera de compresión en algunas tramas: el decoder
+    detecta la trama malformada, reensambla los bytes malinterpretados y la decodifica sin desconectarse.
 - **Aceleración por hardware (multithread)**: los paquetes grandes (≥ 512 KiB) se comprimen con zstd multihilo
   en varios núcleos de CPU.
 - **Compresión/descompresión asíncrona**: los paquetes grandes (≥ 64 KiB) se procesan fuera de los event loops
@@ -88,10 +92,10 @@ todos los servidores.
 
 | Módulo | Archivo |
 |---|---|
-| NeoForge | `zstd-neoforge-beta-0.2-mc<version>.jar` |
-| Fabric | `zstd-fabric-beta-0.2-mc<version>.jar` |
-| Paper | `zstd-paper-beta-0.2-mc<version>.jar` |
-| Velocity | `zstd-velocity-beta-0.2.jar` |
+| NeoForge | `zstd-neoforge-beta-0.6-mc<version>.jar` |
+| Fabric | `zstd-fabric-beta-0.6-mc<version>.jar` |
+| Paper | `zstd-paper-beta-0.6-mc<version>.jar` |
+| Velocity | `zstd-velocity-beta-0.6.jar` |
 
 ## Instalación
 
@@ -160,6 +164,26 @@ compress-if-beneficial: true
 # debug screen bandwidth view (F3 + 3). Client-side only.
 # Disabled by default.
 debug-overlay: false
+
+# Servers where this mod stays completely passive (pure vanilla behavior).
+# Some servers use custom network protocol patchers that break when their
+# compression handlers are replaced. Entries are comma-separated substrings
+# matched against the server address (host or host:port), e.g.
+"disabled-servers": "play.example.com, 10.0.0.5:25565"
+disabled-servers: 
+
+# Mods whose presence makes this mod stay completely passive (pure vanilla
+# behavior). Network-protocol patcher mods (e.g. FNP Patcher, required by some
+# custom server forks) replace the same compression handlers this mod does, so
+# both being active breaks logins on those servers. Entries are mod ids,
+# comma-separated.
+auto-disable-mods: fnp_patcher
+
+# Dump every frame crossing the compression encoder/decoder to zstd-hexdump.log
+# (sizes, direction, peer address and full hex). Only for diagnosing protocol
+# problems with custom servers; adds I/O overhead and grows the log fast.
+# Disabled by default.
+hex-dump: false
 ```
 
 ### Opciones explicadas
@@ -175,6 +199,9 @@ debug-overlay: false
 | `compression-threshold` | ≥ 256 | `256` | Paquetes menores no se comprimen. Mínimo 256 para distinguir zstd de zlib. |
 | `compress-if-beneficial` | true / false | `true` | Si comprimir no encoge el paquete, se envía crudo. |
 | `debug-overlay` | true / false | `false` | Muestra estadísticas zstd (estado, paquetes, ratio) en la vista de ancho de banda del debug (F3 + 3). Solo cliente. |
+| `disabled-servers` | texto (subcadenas separadas por comas) | *(vacío)* | Servidores donde el mod queda totalmente pasivo (comportamiento vanilla puro), para servidores con parches de protocolo propios. |
+| `auto-disable-mods` | ids de mods separados por comas | `fnp_patcher` | Si alguno de estos mods está instalado, el mod queda totalmente pasivo. Evita conflictos con parches de red tipo FNP Patcher / KryptonReno que sustituyen los mismos handlers. |
+| `hex-dump` | true / false | `false` | Vuelca cada trama que cruza el encoder/decoder a `zstd-hexdump.log` (tamaños, dirección, peer y hex completo). Solo para diagnosticar problemas de protocolo con servidores custom; tiene coste de I/O. |
 
 ## Benchmark zlib vs zstd
 

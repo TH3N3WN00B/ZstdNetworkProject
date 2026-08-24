@@ -1,5 +1,6 @@
 package com.rigorberto.zstdnetworkproject.neoforge;
 
+import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
 import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
@@ -11,6 +12,7 @@ import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -26,6 +28,11 @@ public class ZstdNeoForgeClient {
 
     public ZstdNeoForgeClient() {
         settings = loadConfig();
+        String blockingMod = settings.findLoadedAutoDisableMod(id -> ModList.get().isLoaded(id));
+        if (blockingMod != null) {
+            LOGGER.info("ZstdNetworkProject stays passive because '{}' is installed (auto-disable-mods config)", blockingMod);
+            return;
+        }
         ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
         Path configDir = FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject");
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
@@ -71,6 +78,10 @@ public class ZstdNeoForgeClient {
             Connection connection = event.getConnection();
             Object channelValue = ReflectionUtil.getFieldValue(connection, "channel");
             if (channelValue instanceof Channel channel) {
+                if (settings.isServerDisabled(ClientPipelineInjector.remoteAddress(channel))) {
+                    LOGGER.info("ZstdNetworkProject is disabled for this server (disabled-servers config)");
+                    return;
+                }
                 channel.eventLoop().execute(() -> PipelineInjector.injectClient(channel, settings));
             }
         } catch (Exception e) {

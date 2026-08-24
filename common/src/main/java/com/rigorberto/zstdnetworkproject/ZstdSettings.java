@@ -1,5 +1,9 @@
 package com.rigorberto.zstdnetworkproject;
 
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Predicate;
+
 public final class ZstdSettings {
 
     /**
@@ -8,6 +12,13 @@ public final class ZstdSettings {
      * not worth the threading overhead.
      */
     public static final int HARDWARE_ACCEL_MIN_SIZE = 512 * 1024;
+
+    /**
+     * Mods that patch the network stack in ways incompatible with replacing the compression
+     * handlers (e.g. FNP Patcher, required by some custom server forks). When any of these is
+     * loaded, the mod stays completely passive instead of breaking those servers' logins.
+     */
+    public static final List<String> DEFAULT_AUTO_DISABLE_MODS = List.of("fnp_patcher");
 
     /**
      * Packets smaller than this (uncompressed bytes) are never compressed. Must be at least 256:
@@ -29,6 +40,9 @@ public final class ZstdSettings {
     private int compressionThreshold = MIN_COMPRESSION_THRESHOLD;
     private boolean compressIfBeneficial = true;
     private boolean debugOverlay;
+    private List<String> disabledServers = List.of();
+    private List<String> autoDisableMods = DEFAULT_AUTO_DISABLE_MODS;
+    private boolean hexDump;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -105,6 +119,68 @@ public final class ZstdSettings {
 
     public void setDebugOverlay(boolean debugOverlay) {
         this.debugOverlay = debugOverlay;
+    }
+
+    /** Server address substrings (host or host:port) where the mod stays completely passive. */
+    public List<String> getDisabledServers() {
+        return disabledServers;
+    }
+
+    public void setDisabledServers(List<String> disabledServers) {
+        this.disabledServers = disabledServers == null ? List.of() : List.copyOf(disabledServers);
+    }
+
+    /**
+     * True when the given remote address (best-effort {@code host:port} string) matches one of the
+     * configured disabled-server entries, meaning this connection must not be touched at all:
+     * servers with custom protocol patchers break when their compression handlers are replaced.
+     */
+    public boolean isServerDisabled(String remoteAddress) {
+        if (remoteAddress == null || disabledServers.isEmpty()) {
+            return false;
+        }
+        String address = remoteAddress.toLowerCase(Locale.ROOT);
+        for (String entry : disabledServers) {
+            if (!entry.isEmpty() && address.contains(entry.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Mod ids whose presence makes the mod stay completely passive (see {@link #DEFAULT_AUTO_DISABLE_MODS}). */
+    public List<String> getAutoDisableMods() {
+        return autoDisableMods;
+    }
+
+    public void setAutoDisableMods(List<String> autoDisableMods) {
+        this.autoDisableMods = autoDisableMods == null ? List.of() : List.copyOf(autoDisableMods);
+    }
+
+    /**
+     * Returns the first configured mod id that is currently loaded, checked through the supplied
+     * platform predicate ({@code FabricLoader::isModLoaded} or {@code ModList::isLoaded}), or
+     * {@code null} when none of them is installed.
+     */
+    public String findLoadedAutoDisableMod(Predicate<String> isModLoaded) {
+        for (String modId : autoDisableMods) {
+            if (!modId.isEmpty() && isModLoaded.test(modId)) {
+                return modId;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether every frame crossing the encoder/decoder is hex-dumped to
+     * {@code zstd-hexdump.log} for protocol debugging. Off by default.
+     */
+    public boolean isHexDump() {
+        return hexDump;
+    }
+
+    public void setHexDump(boolean hexDump) {
+        this.hexDump = hexDump;
     }
 
     /**

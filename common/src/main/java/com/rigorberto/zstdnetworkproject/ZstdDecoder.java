@@ -43,6 +43,7 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             ThreadLocal.withInitial(Inflater::new);
 
     private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor();
+    private boolean warnedRawFrame;
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
@@ -50,6 +51,7 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             return;
         }
 
+        int frameStart = in.readerIndex();
         int uncompressedSize = readVarInt(in);
 
         if (uncompressedSize < 0) {
@@ -59,6 +61,9 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         if (uncompressedSize == 0) {
             RAW_PACKETS.increment();
             RAW_BYTES.add(in.readableBytes());
+            if (HexDump.isEnabled()) {
+                HexDump.dump("frame-in", "IN raw declared=0 peer=" + HexDump.peerOf(ctx), in);
+            }
             ByteBuf raw = in.readRetainedSlice(in.readableBytes());
             if (processor.isIdle()) {
                 out.add(raw);
@@ -83,6 +88,10 @@ public class ZstdDecoder extends ByteToMessageDecoder {
                         "size=" + uncompressedSize + " frameBytes=" + frameBytes
                                 + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
             }
+            if (HexDump.isEnabled()) {
+                HexDump.dump("frame-in", "IN zstd declared=" + uncompressedSize
+                        + " peer=" + HexDump.peerOf(ctx), in);
+            }
             ByteBuf payload = in.readRetainedSlice(in.readableBytes());
             if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
                 try {
@@ -98,12 +107,19 @@ public class ZstdDecoder extends ByteToMessageDecoder {
 
         ZLIB_PACKETS.increment();
         ZLIB_BYTES.add(uncompressedSize);
+        if (HexDump.isEnabled()) {
+            HexDump.dump("frame-in", "IN zlib declared=" + uncompressedSize
+                    + " peer=" + HexDump.peerOf(ctx), in);
+        }
+        int headerLen = in.readerIndex() - frameStart;
+        byte[] header = new byte[headerLen];
+        in.getBytes(frameStart, header);
         byte[] input = new byte[in.readableBytes()];
         in.readBytes(input);
         if (processor.isIdle()) {
-            out.add(inflateSync(ctx, input, uncompressedSize));
+            out.add(inflateOrPassThrough(ctx, header, input, uncompressedSize));
         } else {
-            processor.add(ctx, new ZlibWork(ctx, input, uncompressedSize));
+            processor.add(ctx, new ZlibWork(this, ctx, header, input, uncompressedSize));
         }
     }
 
@@ -195,6 +211,46 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         return sb.toString();
     }
 
+    /**
+     * Inflates a zlib frame, falling back to passing the payload through unchanged when it turns
+     * out not to be zlib at all. Some third-party servers and proxies write frames that omit the
+     * {@code varint(size)} compression header entirely (a protocol violation vanilla never
+     * produces); in that case the bytes we consumed as the size prefix are really the first bytes
+     * of the packet (usually its packet id), so they are reassembled with the payload before it is
+     * forwarded — dropping them would shift every subsequent read and desync the decoder. Custom
+     * client patchers normally tolerate such peers; disconnecting on the first bad frame would
+     * make this mod unusable there. Logged once per connection.
+     */
+    private ByteBuf inflateOrPassThrough(
+            ChannelHandlerContext ctx, byte[] header, byte[] input, int size) {
+        try {
+            return inflateSync(ctx, input, size);
+        } catch (NotZlibException e) {
+            if (!warnedRawFrame) {
+                warnedRawFrame = true;
+                System.err.println("[zstdnetworkproject] Peer sent an uncompressed frame without "
+                        + "the compression size prefix (non-vanilla server or proxy); restoring the "
+                        + "misread " + header.length + " prefix byte(s) so the packet stays intact. "
+                        + e.getMessage());
+            }
+            if (HexDump.isEnabled()) {
+                HexDump.note("frame-in", "IN pass-through repaired (payload is not zlib, restored "
+                        + "prefix): declared=" + size + " headerBytes=" + header.length
+                        + " bytes=" + input.length + " peer=" + HexDump.peerOf(ctx));
+            }
+            ByteBuf passthrough = ctx.alloc().directBuffer(header.length + input.length);
+            passthrough.writeBytes(header).writeBytes(input);
+            return passthrough;
+        }
+    }
+
+    /** Marks frames whose payload is not a zlib stream at all (non-vanilla raw-frame peers). */
+    private static final class NotZlibException extends IllegalStateException {
+        NotZlibException(String detail, DataFormatException cause) {
+            super(detail, cause);
+        }
+    }
+
     private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {
         byte[] dst = ZstdCodecCtx.scratch(size);
         Inflater inflater = INFLATER_THREAD_LOCAL.get();
@@ -206,12 +262,53 @@ public class ZstdDecoder extends ByteToMessageDecoder {
                 n = inflater.inflate(dst);
             }
         } catch (DataFormatException e) {
-            throw new IllegalStateException("zlib decompression failed", e);
+            String detail = zlibFailureDetail(input, size, e.toString());
+            TraceDump.dump("client-decode", detail);
+            throw new NotZlibException(detail, e);
         }
         if (n != size) {
-            throw new IllegalStateException("zlib decompression produced " + n + " bytes, expected " + size);
+            String detail = zlibFailureDetail(input, size,
+                    "produced " + n + " bytes, expected " + size);
+            TraceDump.dump("client-decode", detail);
+            throw new IllegalStateException(detail);
         }
         return ctx.alloc().directBuffer(size).writeBytes(dst, 0, size);
+    }
+
+    /**
+     * Full context for a zlib failure: declared size, actual frame length, hex head/tail of the
+     * received payload and the running frame-type totals, so a malformed stream can be identified
+     * from the disconnect report alone (peer misbehaving vs. mid-frame desync).
+     */
+    private static String zlibFailureDetail(byte[] input, int size, String reason) {
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("zlib decompression failed. declaredSize=").append(size)
+                .append(" frameBytes=").append(input.length)
+                .append(" reason=").append(reason)
+                .append(" totals: zstd=").append(ZSTD_PACKETS.sum())
+                .append(" zlib=").append(ZLIB_PACKETS.sum())
+                .append(" raw=").append(RAW_PACKETS.sum());
+        if (input.length > 0) {
+            int head = Math.min(input.length, 64);
+            sb.append(" head=").append(hex(input, 0, head));
+            int tailStart = input.length - Math.min(input.length - head, 32);
+            if (tailStart > head) {
+                sb.append(" tail=").append(hex(input, tailStart, input.length - tailStart));
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String hex(byte[] bytes, int offset, int length) {
+        StringBuilder sb = new StringBuilder(length * 2);
+        for (int i = 0; i < length; i++) {
+            int b = bytes[offset + i] & 0xFF;
+            if (b < 0x10) {
+                sb.append('0');
+            }
+            sb.append(Integer.toHexString(b));
+        }
+        return sb.toString();
     }
 
     private static int readVarInt(ByteBuf buf) {
@@ -258,12 +355,17 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     }
 
     private static final class ZlibWork implements OrderedAsyncProcessor.Work {
+        private final ZstdDecoder decoder;
         private final ChannelHandlerContext ctx;
+        private final byte[] header;
         private final byte[] input;
         private final int size;
 
-        ZlibWork(ChannelHandlerContext ctx, byte[] input, int size) {
+        ZlibWork(ZstdDecoder decoder, ChannelHandlerContext ctx, byte[] header, byte[] input,
+                int size) {
+            this.decoder = decoder;
             this.ctx = ctx;
+            this.header = header;
             this.input = input;
             this.size = size;
         }
@@ -276,7 +378,7 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         @Override
         public void processSync() {
             try {
-                ctx.fireChannelRead(inflateSync(ctx, input, size));
+                ctx.fireChannelRead(decoder.inflateOrPassThrough(ctx, header, input, size));
             } catch (Throwable t) {
                 ctx.fireExceptionCaught(t);
             }
