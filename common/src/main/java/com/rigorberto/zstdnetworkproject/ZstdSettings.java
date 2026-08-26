@@ -14,11 +14,10 @@ public final class ZstdSettings {
     public static final int HARDWARE_ACCEL_MIN_SIZE = 512 * 1024;
 
     /**
-     * Mods that patch the network stack in ways incompatible with replacing the compression
-     * handlers (e.g. FNP Patcher, required by some custom server forks). When any of these is
-     * loaded, the mod stays completely passive instead of breaking those servers' logins.
+     * Optional mod ids whose presence makes the mod stay completely passive.
+     * Empty by default so Krypton / FNP Patcher can use Zstd without being auto-disabled.
      */
-    public static final List<String> DEFAULT_AUTO_DISABLE_MODS = List.of("fnp_patcher");
+    public static final List<String> DEFAULT_AUTO_DISABLE_MODS = List.of();
 
     /**
      * Packets smaller than this (uncompressed bytes) are never compressed. Must be at least 256:

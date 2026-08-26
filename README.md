@@ -3,15 +3,14 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-0.9 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-0.10 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
-- **zstd en el cable** en vez de zlib; los pares sin el mod siguen en zlib y nunca se rompe nada.
-- **Negociación segura**: zstd solo se activa cuando ambos extremos lo demuestran (Velocity pregunta
-  durante el login; servidor/cliente detectan los frames zstd del otro).
-- **Compatible** con Krypton, PacketFixer y forks custom; si hay un parcheador incompatible (FNP Patcher)
-  se auto-desactiva. Tolera tramas malformadas de proxies no vanilla sin desconectarse.
+- **zstd en el hilo** en vez de zlib; los pares sin el mod siguen en zlib y nunca se rompe nada.
+- **Negociación segura**: zstd solo se activa cuando ambos extremos lo demuestran (Velocity y Paper preguntan
+  durante el login/play; servidor/cliente detectan los frames zstd del otro).
+- **Compatible** con Krypton, PacketFixer y forks custom. Tolera tramas malformadas de proxies no vanilla sin desconectarse.
 - **Asíncrono y multihilo**: paquetes grandes fuera de los event loops, con orden FIFO garantizado;
   workers con prioridad reducida para no robar CPU al juego (relevante en Windows).
 - **`compress-if-beneficial`**: datos incompresibles se envían crudos en lugar de crecer.
@@ -34,8 +33,8 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2 y 26.2.
 
-Artefactos: `zstd-neoforge-beta-0.9-mc<version>.jar`, `zstd-fabric-beta-0.9-mc<version>.jar`,
-`zstd-paper-beta-0.9-mc<version>.jar`, `zstd-velocity-beta-0.9.jar` (Velocity es independiente de la versión
+Artefactos: `zstd-neoforge-beta-0.10-mc<version>.jar`, `zstd-fabric-beta-0.10-mc<version>.jar`,
+`zstd-paper-beta-0.10-mc<version>.jar`, `zstd-velocity-beta-0.10.jar` (Velocity es independiente de la versión
 de MC). En `dist/` tras compilar.
 
 ## Instalación
@@ -62,7 +61,7 @@ El primer arranque genera `config.yml` comentado y auto-actualizable (las opcion
 | `debug-message` | `true` | Mensaje en chat al activarse zstd. |
 | `debug-overlay` | `false` | Stats zstd en la vista de ancho de banda (F3+3), solo cliente. |
 | `disabled-servers` | *(vacío)* | Servidores donde el mod queda pasivo (subcadenas separadas por comas). |
-| `auto-disable-mods` | `fnp_patcher` | Mods cuya presencia desactiva este mod automáticamente. |
+| `auto-disable-mods` | *(vacío)* | Mods cuya presencia desactiva este mod automáticamente (subcadenas separadas por comas). |
 | `hex-dump` | `false` | Volcado hex de todas las tramas a `zstd-hexdump.log` (solo diagnóstico). |
 
 ## Rendimiento

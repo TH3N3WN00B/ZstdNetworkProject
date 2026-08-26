@@ -55,6 +55,7 @@ public class ZstdFabricClient implements ClientModInitializer {
             return;
         }
         ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
+        ZstdOverlayStats.setClientCompressionLevel(settings.effectiveCompressionLevel());
         Path configDir = FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject");
         HexDump.configure(configDir.resolve("zstd-hexdump.log"), settings.isHexDump());
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
@@ -85,8 +86,17 @@ public class ZstdFabricClient implements ClientModInitializer {
             return null; // NAK: no zstd native on this platform, or this server must stay vanilla.
         }
         negotiated = true;
+        byte[] payload = null;
+        if (buf != null && buf.isReadable()) {
+            payload = new byte[buf.readableBytes()];
+            buf.getBytes(buf.readerIndex(), payload);
+        }
+        int serverLevel = ZstdNegotiation.extractCompressionLevel(payload, -1);
+        if (serverLevel >= 0) {
+            ZstdOverlayStats.setServerCompressionLevel(serverLevel);
+        }
         return CompletableFuture.completedFuture(
-                new PacketByteBuf(Unpooled.wrappedBuffer(ZstdNegotiation.queryPayload())));
+                new PacketByteBuf(Unpooled.wrappedBuffer(ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel()))));
     }
 
     /** True when the remote address matches the disabled-servers config: stay fully passive. */

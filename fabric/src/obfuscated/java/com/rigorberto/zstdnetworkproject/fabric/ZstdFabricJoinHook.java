@@ -24,7 +24,7 @@ public final class ZstdFabricJoinHook {
     private static void onJoin(ServerPlayNetworkHandler handler, PacketSender sender, MinecraftServer server) {
         try {
             // ServerPlayNetworkHandler.connection (inherited from ServerCommonNetworkHandler) -> ClientConnection.channel
-            PipelineInjector.inject(handler.connection.channel, settings);
+            PipelineInjector.injectClient(handler.connection.channel, settings);
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to inject Zstd handlers", e);
             ErrorLogger.log(FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject").resolve("zstd-errors.log"),

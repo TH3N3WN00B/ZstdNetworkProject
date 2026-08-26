@@ -14,6 +14,10 @@ cd "$(dirname "$0")"
 dist="$(pwd)/dist"
 mkdir -p "$dist"
 
+# Clean up obsolete jars and old build logs
+rm -f "$dist"/*.jar
+rm -f build-*.log
+
 if [ "$#" -eq 0 ]; then
   versions=()
   for f in gradle-mc*.properties; do

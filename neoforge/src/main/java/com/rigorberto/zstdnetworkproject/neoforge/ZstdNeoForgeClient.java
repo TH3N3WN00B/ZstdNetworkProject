@@ -34,6 +34,7 @@ public class ZstdNeoForgeClient {
             return;
         }
         ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
+        ZstdOverlayStats.setClientCompressionLevel(settings.effectiveCompressionLevel());
         Path configDir = FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject");
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
         NeoForge.EVENT_BUS.register(this);

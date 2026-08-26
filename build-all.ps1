@@ -15,6 +15,10 @@ $root = $PSScriptRoot
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 
+# Clean up obsolete jars and old build logs
+Remove-Item (Join-Path $dist '*.jar') -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $root -Filter 'build-*.log' -File | Remove-Item -Force -ErrorAction SilentlyContinue
+
 if ($Versions.Count -eq 0) {
     $Versions = Get-ChildItem -Path $root -Filter 'gradle-mc*.properties' -File |
         ForEach-Object { $_.BaseName -replace '^gradle-mc', '' } | Sort-Object

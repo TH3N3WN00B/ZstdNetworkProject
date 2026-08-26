@@ -78,8 +78,8 @@ public class ZstdNetworkProjectNeoForge {
                 return;
             }
             Object channelValue = ReflectionUtil.getFieldValue(nettyConnection, "channel");
-            if (channelValue instanceof Channel) {
-                PipelineInjector.inject((Channel) channelValue, settings);
+            if (channelValue instanceof Channel channel) {
+                PipelineInjector.injectClient(channel, settings);
             }
         } catch (Exception e) {
             LOGGER.debug("Failed to inject Zstd handlers", e);

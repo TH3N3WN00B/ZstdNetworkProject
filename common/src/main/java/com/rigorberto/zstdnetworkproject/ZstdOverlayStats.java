@@ -15,6 +15,8 @@ public final class ZstdOverlayStats {
 
     private static volatile boolean enabled;
     private static volatile boolean zstdObserved;
+    private static volatile int clientCompressionLevel = 3;
+    private static volatile int serverCompressionLevel = -1;
 
     private ZstdOverlayStats() {
     }
@@ -26,6 +28,22 @@ public final class ZstdOverlayStats {
 
     public static void setEnabled(boolean value) {
         enabled = value;
+    }
+
+    public static void setClientCompressionLevel(int level) {
+        clientCompressionLevel = level;
+    }
+
+    public static int getClientCompressionLevel() {
+        return clientCompressionLevel;
+    }
+
+    public static void setServerCompressionLevel(int level) {
+        serverCompressionLevel = level;
+    }
+
+    public static int getServerCompressionLevel() {
+        return serverCompressionLevel;
     }
 
     /**
@@ -44,6 +62,7 @@ public final class ZstdOverlayStats {
     /** Called when a new login starts, so a server without zstd never shows stale state. */
     public static void resetConnection() {
         zstdObserved = false;
+        serverCompressionLevel = -1;
     }
 
     public static long sentPackets() {
@@ -120,8 +139,10 @@ public final class ZstdOverlayStats {
         }
         double ratio = compressionRatio();
         String ratioText = ratio > 0 ? String.format(Locale.ROOT, "%.2fx", ratio) : "n/a";
+        String serverLevelStr = serverCompressionLevel >= 0 ? "lvl " + serverCompressionLevel : "active";
         return new String[] {
-                String.format(Locale.ROOT, "Zstd: active, ratio %s (%.0f%% saved)", ratioText, savingsPercent()),
+                String.format(Locale.ROOT, "Zstd: active (Client: lvl %d | Server: %s), ratio %s (%.0f%% saved)",
+                        clientCompressionLevel, serverLevelStr, ratioText, savingsPercent()),
                 "Sent: " + sentPackets() + " pkts, "
                         + formatBytes(sentUncompressedBytes()) + " -> " + formatBytes(sentCompressedBytes()),
                 "Recv: " + receivedTotalPackets() + " pkts (zstd " + receivedZstdPackets()

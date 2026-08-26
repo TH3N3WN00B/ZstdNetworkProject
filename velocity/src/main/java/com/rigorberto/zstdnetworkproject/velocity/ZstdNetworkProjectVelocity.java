@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
     id = "zstdnetworkproject",
     name = "ZstdNetworkProject",
-    version = "beta-0.9",
+    version = "beta-0.10",
     description = "Zstd packet compressor for Velocity proxy (compatible with Krypton & PacketFixer)",
     authors = {"Rigorberto"}
 )
@@ -140,7 +140,8 @@ public class ZstdNetworkProjectVelocity {
             return;
         }
         String username = event.getUsername();
-        login.sendLoginPluginMessage(CAPABILITY_CHANNEL, ZstdNegotiation.queryPayload(),
+        login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
+                ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
                 response -> zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response)));
     }
 

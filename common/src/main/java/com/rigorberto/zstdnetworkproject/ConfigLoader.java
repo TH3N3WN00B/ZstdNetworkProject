@@ -37,7 +37,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 7;
+    public static final int CONFIG_VERSION = 8;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -87,11 +87,8 @@ public final class ConfigLoader {
             "\"disabled-servers\": \"play.example.com, 10.0.0.5:25565\"\n" +
             "disabled-servers: ",
             "# Mods whose presence makes this mod stay completely passive (pure vanilla\n" +
-            "# behavior). Network-protocol patcher mods (e.g. FNP Patcher, required by some\n" +
-            "# custom server forks) replace the same compression handlers this mod does, so\n" +
-            "# both being active breaks logins on those servers. Entries are mod ids,\n" +
-            "# comma-separated.\n" +
-            "auto-disable-mods: fnp_patcher",
+            "# behavior). Entries are mod ids, comma-separated (empty by default).\n" +
+            "auto-disable-mods: ",
             "# Dump every frame crossing the compression encoder/decoder to zstd-hexdump.log\n" +
             "# (sizes, direction, peer address and full hex). Only for diagnosing protocol\n" +
             "# problems with custom servers; adds I/O overhead and grows the log fast.\n" +

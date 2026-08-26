@@ -30,8 +30,8 @@ public final class ZstdFabricJoinHook {
                 return;
             }
             Object channelValue = ReflectionUtil.getFieldValue(connection, "channel");
-            if (channelValue instanceof Channel) {
-                PipelineInjector.inject((Channel) channelValue, settings);
+            if (channelValue instanceof Channel channel) {
+                PipelineInjector.injectClient(channel, settings);
             }
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to inject Zstd handlers", e);

@@ -23,20 +23,40 @@ public final class ZstdNegotiation {
     public static final byte PROTOCOL_VERSION = 1;
 
     /**
-     * The payload the proxy sends with the login plugin message to probe for zstd support.
+     * The payload the proxy or server sends with the capability query.
+     * Byte 0 is the protocol version, byte 1 is the server compression level.
      */
+    public static byte[] queryPayload(int compressionLevel) {
+        return new byte[]{PROTOCOL_VERSION, (byte) compressionLevel};
+    }
+
     public static byte[] queryPayload() {
-        return new byte[]{PROTOCOL_VERSION};
+        return queryPayload(3);
     }
 
     /**
-     * Whether a client response to the login probe confirms zstd support.
-     *
-     * @param response the response body received from the client, or null when the client did not
-     *                 recognise the channel (vanilla clients NAK the query)
+     * The payload the client sends in response.
+     * Byte 0 is the protocol version, byte 1 is the client compression level.
+     */
+    public static byte[] responsePayload(int compressionLevel) {
+        return new byte[]{PROTOCOL_VERSION, (byte) compressionLevel};
+    }
+
+    /**
+     * Whether a client or server response confirms zstd support.
      */
     public static boolean isSupportedResponse(byte[] response) {
-        return response != null && response.length == 1 && response[0] == PROTOCOL_VERSION;
+        return response != null && response.length >= 1 && response[0] == PROTOCOL_VERSION;
+    }
+
+    /**
+     * Extracts the compression level carried in the payload, or returns the fallback value.
+     */
+    public static int extractCompressionLevel(byte[] payload, int fallback) {
+        if (payload != null && payload.length >= 2) {
+            return payload[1];
+        }
+        return fallback;
     }
 
     private ZstdNegotiation() {
