@@ -84,7 +84,7 @@ public final class ConfigLoader {
             "# Some servers use custom network protocol patchers that break when their\n" +
             "# compression handlers are replaced. Entries are comma-separated substrings\n" +
             "# matched against the server address (host or host:port), e.g.\n" +
-            "\"disabled-servers\": \"play.example.com, 10.0.0.5:25565\"\n" +
+            "# \"disabled-servers\": \"play.example.com, 10.0.0.5:25565\"\n" +
             "disabled-servers: ",
             "# Mods whose presence makes this mod stay completely passive (pure vanilla\n" +
             "# behavior). Entries are mod ids, comma-separated (empty by default).\n" +
