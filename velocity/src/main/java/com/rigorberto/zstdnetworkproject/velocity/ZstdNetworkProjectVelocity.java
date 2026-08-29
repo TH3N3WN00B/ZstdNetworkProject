@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
     id = "zstdnetworkproject",
     name = "ZstdNetworkProject",
-    version = "beta-0.11",
+    version = "beta-1.0",
     description = "Zstd packet compressor for Velocity proxy (compatible with Krypton & PacketFixer)",
     authors = {"Rigorberto"}
 )
@@ -140,6 +140,9 @@ public class ZstdNetworkProjectVelocity {
             return;
         }
         String username = event.getUsername();
+        // Fresh login attempt: drop any stale capability entry from an earlier attempt that never
+        // reached post-login (e.g. failed auth), so the map cannot grow with dead usernames.
+        zstdCapable.remove(username);
         login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
                 ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
                 response -> zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response)));

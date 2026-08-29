@@ -3,7 +3,7 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-0.11 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-1.0 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
@@ -33,8 +33,8 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2 y 26.2.
 
-Artefactos: `zstd-neoforge-beta-0.11-mc<version>.jar`, `zstd-fabric-beta-0.11-mc<version>.jar`,
-`zstd-paper-beta-0.11-mc<version>.jar`, `zstd-velocity-beta-0.11.jar` (Velocity es independiente de la versión
+Artefactos: `zstd-neoforge-beta-1.0-mc<version>.jar`, `zstd-fabric-beta-1.0-mc<version>.jar`,
+`zstd-paper-beta-1.0-mc<version>.jar`, `zstd-velocity-beta-1.0.jar` (Velocity es independiente de la versión
 de MC). En `dist/` tras compilar.
 
 ## Instalación
@@ -46,6 +46,12 @@ de MC). En `dist/` tras compilar.
 | **Velocity** (proxy) | `plugins/` | `plugins/zstdnetworkproject/config.yml` |
 
 Con Velocity instala también el mod en el cliente para que negocie zstd; los vanilla siguen en zlib.
+
+> **Limitación conocida (beta-1.0)**: detrás de un proxy Velocity, el **cliente Fabric** responde a la
+> consulta de capacidad de zstd durante el login y obtiene zstd; el **cliente NeoForge** todavía no responde
+> esa consulta (NeoForge no expone API de red en fase de login), así que los jugadores NeoForge conectados
+> *a través del proxy* usan zlib vanilla. El servidor dedicado NeoForge (sin proxy) sí comprime con zstd.
+> Se abordará en una sesión dedicada.
 
 ## Configuración
 
