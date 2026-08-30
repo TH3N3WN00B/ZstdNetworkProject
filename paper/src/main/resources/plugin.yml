@@ -4,3 +4,12 @@ main: com.rigorberto.zstdnetworkproject.paper.ZstdNetworkProjectPaper
 api-version: 1.21
 author: Rigorberto
 description: Zstd packet compressor for Minecraft Paper server
+commands:
+  zstdinfo:
+    description: Muestra los jugadores conectados con compresion zstd activa (nivel y ping)
+    aliases: [zstd]
+    permission: zstdnetworkproject.info
+permissions:
+  zstdnetworkproject.info:
+    description: Permite ver el listado de jugadores con zstd activo
+    default: op

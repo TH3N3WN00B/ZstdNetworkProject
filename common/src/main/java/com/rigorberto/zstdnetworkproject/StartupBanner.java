@@ -27,14 +27,14 @@ public final class StartupBanner {
     private StartupBanner() {
     }
 
-    /** Version from the containing jar's manifest, or {@code beta-1.0} when unavailable (IDE runs). */
+    /** Version from the containing jar's manifest, or {@code beta-1.1} when unavailable (IDE runs). */
     private static String resolveVersion() {
         try {
             Package pkg = StartupBanner.class.getPackage();
             String version = pkg == null ? null : pkg.getImplementationVersion();
-            return version != null ? version : "ZstdNetworkProject beta-1.0";
+            return version != null ? version : "ZstdNetworkProject beta-1.1";
         } catch (Throwable t) {
-            return "ZstdNetworkProject beta-1.0";
+            return "ZstdNetworkProject beta-1.1";
         }
     }
 

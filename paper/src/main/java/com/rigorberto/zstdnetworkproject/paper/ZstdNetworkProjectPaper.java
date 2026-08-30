@@ -14,22 +14,39 @@ import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, PluginMessageListener {
+public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, PluginMessageListener, CommandExecutor {
 
     private ZstdSettings settings = new ZstdSettings();
 
     /** Cached CraftPlayer#getHandle method; resolved once and reused for every join. */
     private volatile Method getHandleMethod;
+
+    /**
+     * Last compression level each player reported in their zstd capability response. Populated when
+     * the play-phase plugin message arrives and used by /zstdinfo. Main-thread only.
+     */
+    private final Map<UUID, Integer> clientZstdLevels = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -41,6 +58,7 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getMessenger().registerOutgoingPluginChannel(this, ZstdNegotiation.CHANNEL);
         getServer().getMessenger().registerIncomingPluginChannel(this, ZstdNegotiation.CHANNEL, this);
+        Objects.requireNonNull(getCommand("zstdinfo"), "zstdinfo is not registered in plugin.yml").setExecutor(this);
         StartupBanner.print();
         logEnvironment();
     }
@@ -51,6 +69,8 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
             return;
         }
         try {
+            clientZstdLevels.put(player.getUniqueId(),
+                    ZstdNegotiation.extractCompressionLevel(message, settings.effectiveCompressionLevel()));
             Channel nettyChannel = getNettyChannel(player);
             if (nettyChannel != null) {
                 ZstdCapability.markZstdObserved(nettyChannel);
@@ -118,6 +138,47 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
         }
     }
 
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        clientZstdLevels.remove(event.getPlayer().getUniqueId());
+    }
+
+    /**
+     * /zstdinfo: reports how many connected players have zstd compression active, one row per zstd
+     * player with the compression level they reported and their current ping. Never prints IPs.
+     */
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        List<String> rows = new ArrayList<>();
+        int zstdCount = 0;
+        int onlineCount = 0;
+        for (Player player : getServer().getOnlinePlayers()) {
+            onlineCount++;
+            boolean onZstd;
+            try {
+                Channel channel = getNettyChannel(player);
+                onZstd = channel != null && ZstdCapability.remoteSpeaksZstd(channel);
+            } catch (Exception e) {
+                onZstd = false;
+            }
+            if (!onZstd) {
+                continue;
+            }
+            zstdCount++;
+            int level = clientZstdLevels.getOrDefault(player.getUniqueId(), settings.effectiveCompressionLevel());
+            rows.add(" - " + player.getName() + " | nivel " + level + " | ping " + player.getPing() + "ms");
+        }
+        String nativeStatus = ZstdNative.isAvailable() ? "OK" : "NO";
+        sender.sendMessage("[Zstd] " + zstdCount + " de " + onlineCount + " jugadores en zstd ("
+                + (onlineCount - zstdCount) + " en zlib) | native=" + nativeStatus
+                + " nivel-servidor=" + settings.effectiveCompressionLevel()
+                + " umbral=" + settings.getCompressionThreshold() + " bytes");
+        for (String row : rows) {
+            sender.sendMessage("[Zstd]" + row);
+        }
+        return true;
+    }
+
     private Channel getNettyChannel(Player player) throws Exception {
         Object handle;
         try {
@@ -168,9 +229,9 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
                             "Pipeline handlers after failed inject for " + player.getName(),
                             new IllegalStateException(handlerList(channel)));
                 } else {
-                    // Send capability probe to the player
-                    player.sendPluginMessage(this, ZstdNegotiation.CHANNEL,
-                            ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()));
+                    // Send capability probe to the player once their play-phase channel
+                    // registration has arrived.
+                    sendCapabilityProbe(player);
                 }
             } catch (Throwable t) {
                 getLogger().warning("Failed to replace pipeline for " + player.getName() + ": " + t);
@@ -178,6 +239,36 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
                         "Failed to replace pipeline for " + player.getName(), t);
             }
         });
+    }
+
+    /**
+     * Sends the play-phase capability probe to a modded client. Paper only forwards plugin
+     * messages for channels the client advertised through its play-phase {@code minecraft:register},
+     * which a modded client sends the moment it enters play - potentially just after
+     * {@link PlayerJoinEvent} fires. Each attempt before the channel is registered is a harmless
+     * no-op, so keep re-sending until the client proves zstd support or the attempt budget runs out.
+     */
+    private void sendCapabilityProbe(Player player) {
+        final AtomicInteger remaining = new AtomicInteger(40); // ~20 probes over 4s (5-tick period)
+        getServer().getScheduler().runTaskTimer(this, task -> {
+            if (!player.isOnline()) {
+                task.cancel();
+                return;
+            }
+            try {
+                Channel nettyChannel = getNettyChannel(player);
+                if (nettyChannel != null && ZstdCapability.remoteSpeaksZstd(nettyChannel)) {
+                    task.cancel();
+                    return;
+                }
+                player.sendPluginMessage(this, ZstdNegotiation.CHANNEL,
+                        ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()));
+            } catch (Exception ignored) {
+            }
+            if (remaining.decrementAndGet() <= 0) {
+                task.cancel();
+            }
+        }, 0L, 5L);
     }
 
     /** Names + classes of every Netty handler in the pipeline, for diagnosing custom forks. */

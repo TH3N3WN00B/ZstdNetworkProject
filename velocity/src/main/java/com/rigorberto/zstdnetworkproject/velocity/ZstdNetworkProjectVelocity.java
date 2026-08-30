@@ -9,6 +9,10 @@ import com.rigorberto.zstdnetworkproject.ZstdAsyncPools;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdNegotiation;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
+import com.velocitypowered.api.command.CommandManager;
+import com.velocitypowered.api.command.CommandMeta;
+import com.velocitypowered.api.command.CommandSource;
+import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
@@ -31,6 +35,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -38,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
     id = "zstdnetworkproject",
     name = "ZstdNetworkProject",
-    version = "beta-1.0",
+    version = "beta-1.1",
     description = "Zstd packet compressor for Velocity proxy (compatible with Krypton & PacketFixer)",
     authors = {"Rigorberto"}
 )
@@ -53,6 +59,7 @@ public class ZstdNetworkProjectVelocity {
             MinecraftChannelIdentifier.from(ZstdNegotiation.CHANNEL);
 
     private final ProxyServer proxy;
+    private final CommandManager commandManager;
     private final Logger logger;
     private final Path dataDirectory;
     private ZstdSettings settings = new ZstdSettings();
@@ -63,6 +70,12 @@ public class ZstdNetworkProjectVelocity {
      * and read by {@link #onPlayerPostLogin}.
      */
     private final Map<String, Boolean> zstdCapable = new ConcurrentHashMap<>();
+
+    /**
+     * Username -> the compression level the client reported in its zstd capability response.
+     * -1 while unknown (e.g. NAK response). Used by /zstdinfo.
+     */
+    private final Map<String, Integer> zstdClientLevels = new ConcurrentHashMap<>();
 
     // Reflection targets for accessing the player's Netty channel.
     private static Method getConnectionMethod;
@@ -92,8 +105,10 @@ public class ZstdNetworkProjectVelocity {
     }
 
     @Inject
-    public ZstdNetworkProjectVelocity(ProxyServer proxy, Logger logger, @DataDirectory Path dataDirectory) {
+    public ZstdNetworkProjectVelocity(ProxyServer proxy, CommandManager commandManager, Logger logger,
+                                      @DataDirectory Path dataDirectory) {
         this.proxy = proxy;
+        this.commandManager = commandManager;
         this.logger = logger;
         this.dataDirectory = dataDirectory;
     }
@@ -102,6 +117,7 @@ public class ZstdNetworkProjectVelocity {
     public void onProxyInitialization(ProxyInitializeEvent event) {
         settings = loadConfig();
         StartupBanner.print();
+        registerInfoCommand();
         if (!ZstdNative.isAvailable()) {
             String osName = System.getProperty("os.name", "unknown");
             logger.warn("zstd native library is not available on this platform ({} {}); "
@@ -143,14 +159,20 @@ public class ZstdNetworkProjectVelocity {
         // Fresh login attempt: drop any stale capability entry from an earlier attempt that never
         // reached post-login (e.g. failed auth), so the map cannot grow with dead usernames.
         zstdCapable.remove(username);
+        zstdClientLevels.remove(username);
         login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
                 ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
-                response -> zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response)));
+                response -> {
+                    zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response));
+                    zstdClientLevels.put(username, ZstdNegotiation.extractCompressionLevel(response, -1));
+                });
     }
 
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
-        zstdCapable.remove(event.getPlayer().getUsername());
+        String username = event.getPlayer().getUsername();
+        zstdCapable.remove(username);
+        zstdClientLevels.remove(username);
     }
 
     @Subscribe
@@ -203,5 +225,51 @@ public class ZstdNetworkProjectVelocity {
     private boolean inject(Channel channel) {
         return PipelineInjector.inject(channel, settings,
                 PipelineInjector.VELOCITY_ENCODER, PipelineInjector.VELOCITY_DECODER, true);
+    }
+
+    /**
+     * /zstdinfo: reports how many players are connected through zstd compression, one row per zstd
+     * player with the compression level they reported and their current ping. Never prints IPs.
+     */
+    private void registerInfoCommand() {
+        CommandMeta meta = commandManager.metaBuilder("zstdinfo").aliases("zstd").plugin(this).build();
+        commandManager.register(meta, new SimpleCommand() {
+            @Override
+            public void execute(Invocation invocation) {
+                CommandSource source = invocation.source();
+                if (!source.hasPermission("zstdnetworkproject.info")) {
+                    source.sendMessage(Component.text(
+                            "No tienes permiso para usar este comando.", NamedTextColor.RED));
+                    return;
+                }
+                List<String> rows = new ArrayList<>();
+                int zstdCount = 0;
+                int onlineCount = 0;
+                for (Player player : proxy.getAllPlayers()) {
+                    onlineCount++;
+                    if (!Boolean.TRUE.equals(zstdCapable.get(player.getUsername()))) {
+                        continue;
+                    }
+                    zstdCount++;
+                    int level = zstdClientLevels.getOrDefault(player.getUsername(),
+                            settings.effectiveCompressionLevel());
+                    if (level < 0) {
+                        level = settings.effectiveCompressionLevel();
+                    }
+                    rows.add(" - " + player.getUsername() + " | nivel " + level
+                            + " | ping " + player.getPing() + "ms");
+                }
+                String nativeStatus = ZstdNative.isAvailable() ? "OK" : "NO";
+                source.sendMessage(Component.text(
+                        "[Zstd] " + zstdCount + " de " + onlineCount + " jugadores en zstd ("
+                                + (onlineCount - zstdCount) + " en zlib) | native=" + nativeStatus
+                                + " nivel-proxy=" + settings.effectiveCompressionLevel()
+                                + " umbral=" + settings.getCompressionThreshold() + " bytes",
+                        NamedTextColor.AQUA));
+                for (String row : rows) {
+                    source.sendMessage(Component.text("[Zstd]" + row, NamedTextColor.GREEN));
+                }
+            }
+        });
     }
 }

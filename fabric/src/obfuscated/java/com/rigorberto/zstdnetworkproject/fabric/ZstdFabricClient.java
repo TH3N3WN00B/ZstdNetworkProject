@@ -16,8 +16,10 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectio
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
@@ -62,6 +64,9 @@ public class ZstdFabricClient implements ClientModInitializer {
         ClientLoginConnectionEvents.INIT.register(ZstdFabricClient::onLoginInit);
         ClientLoginNetworking.registerGlobalReceiver(
                 Identifier.tryParse(ZstdNegotiation.CHANNEL), ZstdFabricClient::onLoginQuery);
+        PayloadTypeRegistry.playC2S().register(ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC);
+        ClientPlayNetworking.registerGlobalReceiver(ZstdCapablePayload.TYPE, ZstdFabricClient::onPlayQuery);
         ClientConfigurationConnectionEvents.INIT.register(ZstdFabricClient::onConfigurationInit);
         ClientPlayConnectionEvents.JOIN.register(ZstdFabricClient::onJoin);
         if (settings.isDebugOverlay()) {
@@ -97,6 +102,25 @@ public class ZstdFabricClient implements ClientModInitializer {
         }
         return CompletableFuture.completedFuture(
                 new PacketByteBuf(Unpooled.wrappedBuffer(ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel()))));
+    }
+
+    /**
+     * Answers the Paper server's play-phase capability probe. Unlike the login probe (which only
+     * our proxy sends), this also works against a Paper server without a proxy, which reaches
+     * modded clients through the play-phase plugin message channel. Answering keeps the connection
+     * on vanilla compression until the server switches to zstd; our frame-sniffing encoder flips
+     * automatically once the first zstd frame arrives from the server.
+     */
+    private static void onPlayQuery(ZstdCapablePayload payload, ClientPlayNetworking.Context context) {
+        if (!ZstdNative.isAvailable() || isDisabled(context.client().getNetworkHandler())) {
+            return; // NAK: no zstd native, or this server must stay vanilla.
+        }
+        int serverLevel = ZstdNegotiation.extractCompressionLevel(payload.data(), -1);
+        if (serverLevel >= 0) {
+            ZstdOverlayStats.setServerCompressionLevel(serverLevel);
+        }
+        ClientPlayNetworking.send(new ZstdCapablePayload(
+                ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel())));
     }
 
     /** True when the remote address matches the disabled-servers config: stay fully passive. */
