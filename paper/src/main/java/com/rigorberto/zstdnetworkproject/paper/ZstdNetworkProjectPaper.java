@@ -48,9 +48,13 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
      */
     private final Map<UUID, Integer> clientZstdLevels = new HashMap<>();
 
+    /** False when the zstd native library could not load: the plugin then stays fully passive. */
+    private boolean zstdUsable;
+
     @Override
     public void onEnable() {
         settings = loadConfig();
+        zstdUsable = ZstdNative.isAvailable();
         HexDump.configure(getDataFolder().toPath().resolve("zstd-hexdump.log"), settings.isHexDump());
         if (HexDump.isEnabled()) {
             getLogger().info("hex-dump enabled: frames are being written to " + getDataFolder().toPath().resolve("zstd-hexdump.log"));
@@ -65,7 +69,9 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
 
     @Override
     public void onPluginMessageReceived(String channel, Player player, byte[] message) {
-        if (!ZstdNegotiation.CHANNEL.equals(channel) || !ZstdNegotiation.isSupportedResponse(message)) {
+        if (!zstdUsable
+                || !ZstdNegotiation.CHANNEL.equals(channel)
+                || !ZstdNegotiation.isSupportedResponse(message)) {
             return;
         }
         try {
@@ -129,6 +135,9 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
+        if (!zstdUsable) {
+            return; // No native library: never install handlers we cannot run, never probe.
+        }
         Player player = event.getPlayer();
         try {
             replacePipeline(player);
@@ -249,7 +258,7 @@ public class ZstdNetworkProjectPaper extends JavaPlugin implements Listener, Plu
      * no-op, so keep re-sending until the client proves zstd support or the attempt budget runs out.
      */
     private void sendCapabilityProbe(Player player) {
-        final AtomicInteger remaining = new AtomicInteger(40); // ~20 probes over 4s (5-tick period)
+        final AtomicInteger remaining = new AtomicInteger(40); // 40 probes on a 5-tick period: ~10s
         getServer().getScheduler().runTaskTimer(this, task -> {
             if (!player.isOnline()) {
                 task.cancel();

@@ -59,34 +59,67 @@ public final class ZstdOverlayStats {
         zstdObserved = true;
     }
 
+    /**
+     * Baselines captured at {@link #resetConnection()}. The underlying counters are process-wide
+     * {@link LongAdder}s that never go backwards (a server has many connections sharing them), so
+     * per-connection figures are produced by subtracting the value they held when this connection
+     * started rather than by zeroing them.
+     */
+    private static volatile long basePackets;
+    private static volatile long baseInputBytes;
+    private static volatile long baseOutputBytes;
+    private static volatile long baseZstdPackets;
+    private static volatile long baseZlibPackets;
+    private static volatile long baseRawPackets;
+
     /** Called when a new login starts, so a server without zstd never shows stale state. */
     public static void resetConnection() {
         zstdObserved = false;
         serverCompressionLevel = -1;
+        basePackets = totalSentPackets();
+        baseInputBytes = totalSentUncompressedBytes();
+        baseOutputBytes = totalSentCompressedBytes();
+        baseZstdPackets = ZstdDecoder.ZSTD_PACKETS.sum();
+        baseZlibPackets = ZstdDecoder.ZLIB_PACKETS.sum();
+        baseRawPackets = ZstdDecoder.RAW_PACKETS.sum();
+    }
+
+    // Both encoders are summed everywhere: proxies install ZstdFrameEncoder and never ZstdEncoder,
+    // so reading only the latter reports zero traffic on Velocity.
+    private static long totalSentPackets() {
+        return ZstdEncoder.PACKETS_COMPRESSED.sum() + ZstdFrameEncoder.PACKETS_COMPRESSED.sum();
+    }
+
+    private static long totalSentUncompressedBytes() {
+        return ZstdEncoder.INPUT_BYTES.sum() + ZstdFrameEncoder.INPUT_BYTES.sum();
+    }
+
+    private static long totalSentCompressedBytes() {
+        return ZstdEncoder.OUTPUT_BYTES.sum() + ZstdFrameEncoder.OUTPUT_BYTES.sum();
     }
 
     public static long sentPackets() {
-        return ZstdEncoder.PACKETS_COMPRESSED.sum();
+        return totalSentPackets() - basePackets;
     }
 
     public static long sentUncompressedBytes() {
-        return ZstdEncoder.INPUT_BYTES.sum();
+        return totalSentUncompressedBytes() - baseInputBytes;
     }
 
     public static long sentCompressedBytes() {
-        return ZstdEncoder.OUTPUT_BYTES.sum();
+        return totalSentCompressedBytes() - baseOutputBytes;
     }
 
     public static long receivedZstdPackets() {
-        return ZstdDecoder.ZSTD_PACKETS.sum();
+        return ZstdDecoder.ZSTD_PACKETS.sum() - baseZstdPackets;
     }
 
     public static long receivedZlibPackets() {
-        return ZstdDecoder.ZLIB_PACKETS.sum();
+        return ZstdDecoder.ZLIB_PACKETS.sum() - baseZlibPackets;
     }
 
     public static long receivedRawPackets() {
-        return ZstdDecoder.RAW_PACKETS.sum();
+        return ZstdDecoder.RAW_PACKETS.sum() - baseRawPackets;
     }
 
     public static long receivedTotalPackets() {

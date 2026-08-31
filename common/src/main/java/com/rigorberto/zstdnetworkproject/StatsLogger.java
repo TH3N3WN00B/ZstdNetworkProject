@@ -38,9 +38,11 @@ public final class StatsLogger {
             }
 
             try {
-                long curEncCompressed = ZstdEncoder.PACKETS_COMPRESSED.sum();
-                long curEncIn = ZstdEncoder.INPUT_BYTES.sum();
-                long curEncOut = ZstdEncoder.OUTPUT_BYTES.sum();
+                // Both encoders must be summed: proxies install ZstdFrameEncoder and never
+                // ZstdEncoder, so reading only the latter reports zero traffic on Velocity.
+                long curEncCompressed = ZstdOverlayStats.sentPackets();
+                long curEncIn = ZstdOverlayStats.sentUncompressedBytes();
+                long curEncOut = ZstdOverlayStats.sentCompressedBytes();
                 long curZstd = ZstdDecoder.ZSTD_PACKETS.sum();
                 long curZstdBytes = ZstdDecoder.ZSTD_BYTES.sum();
                 long curZlib = ZstdDecoder.ZLIB_PACKETS.sum();
@@ -79,7 +81,10 @@ public final class StatsLogger {
                 zlib = curZlib;
                 raw = curRaw;
 
-                Files.createDirectories(logFile.getParent());
+                Path parent = logFile.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
                 Files.writeString(logFile, line + System.lineSeparator(), StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
             } catch (Exception e) {

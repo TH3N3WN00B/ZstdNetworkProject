@@ -1,7 +1,6 @@
 package com.rigorberto.zstdnetworkproject.fabric;
 
 import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
-import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.HexDump;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
@@ -17,9 +16,9 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.networking.v1.C2SPlayChannelEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
@@ -34,6 +33,7 @@ import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
@@ -49,7 +49,7 @@ public class ZstdFabricClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        settings = loadConfig();
+        settings = ZstdNetworkProjectFabric.settings();
         String blockingMod = settings.findLoadedAutoDisableMod(FabricLoader.getInstance()::isModLoaded);
         if (blockingMod != null) {
             ZstdNetworkProjectFabric.LOGGER.info(
@@ -63,12 +63,11 @@ public class ZstdFabricClient implements ClientModInitializer {
         StatsLogger.start(configDir.resolve("zstd-stats.log"), settings.effectiveCompressionLevel());
         ClientLoginConnectionEvents.INIT.register(ZstdFabricClient::onLoginInit);
         ClientLoginNetworking.registerGlobalReceiver(
-                Identifier.tryParse(ZstdNegotiation.CHANNEL), ZstdFabricClient::onLoginQuery);
-        PayloadTypeRegistry.playC2S().register(ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC);
-        PayloadTypeRegistry.playS2C().register(ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC);
+                ZstdCapablePayload.TYPE.id(), ZstdFabricClient::onLoginQuery);
         ClientPlayNetworking.registerGlobalReceiver(ZstdCapablePayload.TYPE, ZstdFabricClient::onPlayQuery);
         ClientConfigurationConnectionEvents.INIT.register(ZstdFabricClient::onConfigurationInit);
         ClientPlayConnectionEvents.JOIN.register(ZstdFabricClient::onJoin);
+        C2SPlayChannelEvents.REGISTER.register(ZstdFabricClient::onServerChannelsRegistered);
         if (settings.isDebugOverlay()) {
             HudRenderCallback.EVENT.register(ZstdFabricClient::renderOverlay);
         }
@@ -88,7 +87,9 @@ public class ZstdFabricClient implements ClientModInitializer {
                                                                   PacketByteBuf buf,
                                                                   Consumer<?> sender) {
         if (!ZstdNative.isAvailable() || isDisabled(handler)) {
-            return null; // NAK: no zstd native on this platform, or this server must stay vanilla.
+            // NAK. Must be a completed future holding null, never a bare null: Fabric API calls
+            // thenAccept() on whatever this returns and would NPE on the network thread.
+            return CompletableFuture.completedFuture(null);
         }
         negotiated = true;
         byte[] payload = null;
@@ -155,6 +156,39 @@ public class ZstdFabricClient implements ClientModInitializer {
             ZstdCapability.markZstdObserved(handler.connection.channel);
         }
         tryInject(handler, ClientPipelineInjector::inject);
+        announceCapability(handler);
+    }
+
+    /**
+     * The server just told us which plugin-message channels it accepts. If ours is among them the
+     * peer runs this mod, so announce zstd support now rather than waiting to be asked.
+     */
+    private static void onServerChannelsRegistered(ClientPlayNetworkHandler handler, PacketSender sender,
+                                                   MinecraftClient client, List<Identifier> channels) {
+        if (channels.contains(ZstdCapablePayload.TYPE.id())) {
+            announceCapability(handler);
+        }
+    }
+
+    /**
+     * Tells the server this client can decode zstd. Both encoders refuse to send zstd until their
+     * peer is known to speak it, so without this announcement a modded client and a modded
+     * server (Fabric, NeoForge or Paper, with no proxy in between) would each sit on vanilla zlib
+     * waiting for the other to go first.
+     */
+    private static void announceCapability(Object handler) {
+        if (!ZstdNative.isAvailable() || isDisabled(handler)) {
+            return;
+        }
+        try {
+            if (!ClientPlayNetworking.canSend(ZstdCapablePayload.TYPE)) {
+                return; // Vanilla server (or one without the mod): stay on zlib, say nothing.
+            }
+            ClientPlayNetworking.send(new ZstdCapablePayload(
+                    ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel())));
+        } catch (Exception e) {
+            ZstdNetworkProjectFabric.LOGGER.debug("Failed to announce zstd support", e);
+        }
     }
 
     private static void tryInject(ClientCommonNetworkHandler handler, ClientPipelineInjector.ChannelInjector injection) {
@@ -170,15 +204,6 @@ public class ZstdFabricClient implements ClientModInitializer {
             ZstdNetworkProjectFabric.LOGGER.debug("No compression handlers replaced on client connection");
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to inject Zstd handlers on client", e);
-        }
-    }
-
-    private static ZstdSettings loadConfig() {
-        try {
-            return ConfigLoader.load(FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject").resolve("config.yml"));
-        } catch (Exception e) {
-            ZstdNetworkProjectFabric.LOGGER.warn("Failed to load config.yml, using defaults: {}", e.getMessage());
-            return new ZstdSettings();
         }
     }
 

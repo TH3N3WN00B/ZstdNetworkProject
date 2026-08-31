@@ -14,10 +14,6 @@ public final class PipelineInjector {
     private PipelineInjector() {
     }
 
-    public static boolean inject(Channel channel, ZstdSettings settings) {
-        return inject(channel, settings, VANILLA_ENCODER, VANILLA_DECODER, false, false);
-    }
-
     public static boolean injectDecoder(Channel channel, ZstdSettings settings) {
         return inject(channel, settings, null, VANILLA_DECODER, false, false);
     }

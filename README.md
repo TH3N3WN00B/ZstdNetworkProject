@@ -49,12 +49,14 @@ de MC). En `dist/` tras compilar.
 
 Con Velocity instala también el mod en el cliente para que negocie zstd; los vanilla siguen en zlib.
 
-> **Limitación conocida (beta-1.1)**: detrás de un proxy Velocity, el **cliente Fabric** ya negocia zstd de
-> extremo a extremo: responde a la consulta de capacidad del proxy en la fase de login *y* al sondeo en fase
-> play del servidor Paper (este último añadido en beta-1.1 junto con la corrección del handshake play).
-> El **cliente NeoForge** sigue sin poder responder la consulta de login (NeoForge no expone API de red en
-> fase de login), así que los jugadores NeoForge conectados *a través del proxy* usan zlib vanilla.
-> El servidor dedicado NeoForge (sin proxy) sí comprime con zstd.
+Sin proxy, el cliente anuncia su soporte de zstd al entrar (canal `zstdnetworkproject:capable`) y el servidor
+activa zstd para esa conexión. Ambos extremos envían zlib vanilla hasta que el otro demuestra que habla zstd,
+así que este anuncio es lo que arranca la negociación en Fabric, NeoForge y Paper.
+
+> **Limitación conocida**: detrás de un proxy Velocity, el **cliente NeoForge** no puede responder la consulta
+> de capacidad en la fase de login (NeoForge no expone API de red en esa fase), así que los jugadores NeoForge
+> conectados *a través del proxy* usan zlib vanilla. El cliente Fabric sí la responde. Sin proxy (servidor
+> dedicado Fabric, NeoForge o Paper) ambos clientes activan zstd.
 
 ## Configuración
 
@@ -70,7 +72,7 @@ El primer arranque genera `config.yml` comentado y auto-actualizable (las opcion
 | `debug-message` | `true` | Mensaje en chat al activarse zstd. |
 | `debug-overlay` | `false` | Stats zstd en la vista de ancho de banda (F3+3), solo cliente. |
 | `disabled-servers` | *(vacío)* | Servidores donde el mod queda pasivo (subcadenas separadas por comas). |
-| `auto-disable-mods` | *(vacío)* | Mods cuya presencia desactiva este mod automáticamente (subcadenas separadas por comas). |
+| `auto-disable-mods` | *(vacío)* | Mods cuya presencia desactiva este mod automáticamente (ids exactos separados por comas). |
 | `hex-dump` | `false` | Volcado hex de todas las tramas a `zstd-hexdump.log` (solo diagnóstico). |
 
 ## Rendimiento

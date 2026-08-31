@@ -61,7 +61,10 @@ foreach ($version in $Versions) {
     }
 
     foreach ($module in @('neoforge', 'fabric', 'paper')) {
-        if ($module -eq 'paper' -and $propMap['paper_version'] -eq 'NONE') {
+        # Skip paper when the group file has no paper_version at all, not only when it
+        # says NONE: otherwise stale paper jars from an earlier group get copied to dist.
+        if ($module -eq 'paper' -and
+            (-not $propMap.ContainsKey('paper_version') -or $propMap['paper_version'] -eq 'NONE')) {
             continue
         }
         $libs = Join-Path $root "$module\build\libs"

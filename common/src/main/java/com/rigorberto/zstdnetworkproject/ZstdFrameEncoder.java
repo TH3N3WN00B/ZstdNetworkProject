@@ -38,7 +38,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
 
     private final int compressionLevel;
     private final ZstdSettings settings;
-    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor();
+    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor(OrderedAsyncProcessor.Direction.OUTBOUND);
     private boolean closeCleanupAttached;
 
     public ZstdFrameEncoder(int compressionLevel) {
@@ -111,9 +111,10 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
      * is smaller than the raw frame ({@code length+1, 0x00, payload}).
      */
     private static boolean beneficial(int uncompressed, int compressedSize) {
-        int frameLength = varIntLength(uncompressed) + compressedSize;
-        int rawFrameLength = varIntLength(uncompressed + 1) + 1 + uncompressed;
-        return varIntLength(frameLength) + frameLength < varIntLength(rawFrameLength) + rawFrameLength;
+        // Both sides are measured the same way: the frame body, plus the VarInt that prefixes it.
+        int compressedBody = varIntLength(uncompressed) + compressedSize;
+        int rawBody = 1 + uncompressed;
+        return varIntLength(compressedBody) + compressedBody < varIntLength(rawBody) + rawBody;
     }
 
     /** Encodes a sub-threshold packet as {@code varint(len+1), 0x00, raw}. Releases {@code msg}. */
@@ -132,10 +133,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     private static void compressSync(ChannelHandlerContext ctx, ByteBuf in, int uncompressed, int level,
                                      int workers, ZstdSettings settings, ChannelPromise promise) {
         try {
-            ByteBuf out = compressDirectOrCopy(ctx, in, uncompressed, level, workers, settings);
-            if (out != null) {
-                ctx.write(out, promise);
-            }
+            ctx.write(compressDirectOrCopy(ctx, in, uncompressed, level, workers, settings), promise);
         } catch (Throwable t) {
             promise.tryFailure(t);
         } finally {
@@ -144,8 +142,9 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     }
 
     /**
-     * Compresses the input synchronously into a pooled buffer. Returns null when the packet was
-     * sent raw instead (never-expand fallback).
+     * Compresses the input synchronously into a pooled buffer holding the complete length-prefixed
+     * frame (or the {@code length+1, 0x00, raw} form when {@code compress-if-beneficial} rejects the
+     * compressed one).
      */
     private static ByteBuf compressDirectOrCopy(ChannelHandlerContext ctx, ByteBuf in, int uncompressed,
                                                 int level, int workers, ZstdSettings settings) {
@@ -154,24 +153,34 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         int sizeVarIntLength = varIntLength(uncompressed);
 
         ByteBuf out = ctx.alloc().directBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength + bound);
-        ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
-        ByteBuffer src;
-        if (in.isDirect()) {
-            src = in.nioBuffer();
-        } else if (in.hasArray()) {
-            src = ByteBuffer.wrap(in.array(), in.arrayOffset() + in.readerIndex(), uncompressed);
-        } else {
-            byte[] input = ZstdCodecCtx.scratch(uncompressed);
-            in.getBytes(in.readerIndex(), input, 0, uncompressed);
-            src = ByteBuffer.wrap(input, 0, uncompressed);
-        }
+        // zstd-jni only accepts direct NIO buffers, so anything else (heap allocator, a composite
+        // whose nioBuffer() would merge into a heap buffer) is staged through a direct copy first.
+        ByteBuf staged = ZstdCodecCtx.isNativeReadable(in) ? null : ctx.alloc().directBuffer(uncompressed);
+        try {
+            ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
+            ByteBuffer src;
+            if (staged == null) {
+                src = in.nioBuffer();
+            } else {
+                staged.writeBytes(in, in.readerIndex(), uncompressed);
+                src = staged.nioBuffer();
+            }
 
-        int size = zctx.compress(dst, src);
-        if (size < 0) {
-            out.release();
-            throw new IllegalStateException("zstd compression failed: " + size);
+            int size = zctx.compress(dst, src);
+            if (size < 0) {
+                throw new IllegalStateException("zstd compression failed: " + size);
+            }
+            ByteBuf frame = finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
+            out = null;
+            return frame;
+        } finally {
+            if (staged != null) {
+                staged.release();
+            }
+            if (out != null) {
+                out.release();
+            }
         }
-        return finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
     }
 
     /**
@@ -185,10 +194,17 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
                                         ChannelHandlerContext ctx, ByteBuf in, int uncompressed,
                                         ZstdSettings settings) {
         if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
-            out.release();
+            // Build the replacement before releasing the compressed frame, so a failure here
+            // leaves `out` intact for the caller's cleanup instead of double-releasing it.
             ByteBuf raw = rawAlloc(ctx, uncompressed);
-            raw.writeByte(0);
-            raw.writeBytes(in, in.readerIndex(), uncompressed);
+            try {
+                raw.writeByte(0);
+                raw.writeBytes(in, in.readerIndex(), uncompressed);
+            } catch (Throwable t) {
+                raw.release();
+                throw t;
+            }
+            out.release();
             OUTPUT_BYTES.add(raw.readableBytes());
             return raw;
         }
@@ -265,6 +281,11 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         }
 
         @Override
+        public int queuedBytes() {
+            return uncompressed;
+        }
+
+        @Override
         public boolean isAsync() {
             return false;
         }
@@ -306,6 +327,11 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
             this.workers = workers;
             this.settings = settings;
             this.promise = promise;
+        }
+
+        @Override
+        public int queuedBytes() {
+            return uncompressed;
         }
 
         @Override

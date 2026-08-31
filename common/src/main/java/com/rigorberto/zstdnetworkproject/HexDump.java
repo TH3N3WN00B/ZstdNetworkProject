@@ -4,6 +4,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 
 import java.io.IOException;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,10 +43,11 @@ public final class HexDump {
 
     /** Configures the dump target once at startup; later calls are ignored so runtime code cannot redirect it. */
     public static void configure(Path logFile, boolean on) {
-        if (file == null) {
-            file = logFile.toAbsolutePath();
-            enabled = on && logFile != null;
+        if (file != null || logFile == null) {
+            return;
         }
+        file = logFile.toAbsolutePath();
+        enabled = on;
     }
 
     public static boolean isEnabled() {
@@ -104,6 +106,13 @@ public final class HexDump {
         writeRaw(tag, sb.toString());
     }
 
+    /**
+     * Kept open for the lifetime of the dump instead of reopening per frame: this runs on the Netty
+     * event loop, and an open/append/close cycle per frame turns every packet into three syscalls
+     * plus a directory lookup. Flushed after each entry so a crash still leaves a usable log.
+     */
+    private static Writer writer;
+
     private static void writeRaw(String tag, String body) {
         if (written.get() >= MAX_TOTAL_BYTES) {
             return;
@@ -114,24 +123,52 @@ public final class HexDump {
                 return;
             }
             try {
-                Path path = file;
-                if (path == null) {
+                Writer out = openWriter();
+                if (out == null) {
                     return;
                 }
-                if (path.getParent() != null) {
-                    Files.createDirectories(path.getParent());
-                }
-                Files.writeString(path, line, StandardCharsets.UTF_8,
-                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+                out.write(line);
                 written.addAndGet(line.length());
                 if (written.get() >= MAX_TOTAL_BYTES) {
-                    Files.writeString(path, "[" + LocalDateTime.now().format(TIMESTAMP)
+                    out.write("[" + LocalDateTime.now().format(TIMESTAMP)
                             + "] hex-dump limit reached (" + MAX_TOTAL_BYTES + " bytes), stopping"
-                            + System.lineSeparator(), StandardCharsets.UTF_8,
-                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+                            + System.lineSeparator());
                 }
+                out.flush();
             } catch (IOException | RuntimeException e) {
                 // tracing must never crash the game or server
+                closeQuietly();
+            }
+        }
+    }
+
+    /** Must be called while holding {@link #LOCK}. */
+    private static Writer openWriter() throws IOException {
+        if (writer != null) {
+            return writer;
+        }
+        Path path = file;
+        if (path == null) {
+            return null;
+        }
+        Path parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+        return writer;
+    }
+
+    /** Must be called while holding {@link #LOCK}. */
+    private static void closeQuietly() {
+        Writer out = writer;
+        writer = null;
+        if (out != null) {
+            try {
+                out.close();
+            } catch (IOException | RuntimeException ignored) {
+                // nothing useful to do while already handling a dump failure
             }
         }
     }
