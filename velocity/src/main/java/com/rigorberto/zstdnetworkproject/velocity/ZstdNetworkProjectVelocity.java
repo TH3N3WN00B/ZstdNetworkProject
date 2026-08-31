@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
     id = "zstdnetworkproject",
     name = "ZstdNetworkProject",
-    version = "beta-1.1",
+    version = "beta-2.0",
     description = "Zstd packet compressor for Velocity proxy (compatible with Krypton & PacketFixer)",
     authors = {"Rigorberto"}
 )
