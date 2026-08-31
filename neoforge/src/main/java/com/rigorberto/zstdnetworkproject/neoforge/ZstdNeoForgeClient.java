@@ -1,18 +1,19 @@
 package com.rigorberto.zstdnetworkproject.neoforge;
 
 import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
-import com.rigorberto.zstdnetworkproject.ConfigLoader;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StatsLogger;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
+import com.rigorberto.zstdnetworkproject.ZstdNegotiation;
 import com.rigorberto.zstdnetworkproject.ZstdOverlayStats;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.Connection;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -26,13 +27,13 @@ public class ZstdNeoForgeClient {
     private static final Logger LOGGER = LoggerFactory.getLogger("zstdnetworkproject");
     private final ZstdSettings settings;
 
-    public ZstdNeoForgeClient() {
-        settings = loadConfig();
-        String blockingMod = settings.findLoadedAutoDisableMod(id -> ModList.get().isLoaded(id));
-        if (blockingMod != null) {
-            LOGGER.info("ZstdNetworkProject stays passive because '{}' is installed (auto-disable-mods config)", blockingMod);
-            return;
-        }
+    /**
+     * @param settings the instance the mod container already parsed; re-reading config.yml here
+     *                 would parse the same file a second time into an object that can disagree with
+     *                 the server-side one (the loader rewrites the file when its version is stale)
+     */
+    public ZstdNeoForgeClient(ZstdSettings settings) {
+        this.settings = settings;
         ZstdOverlayStats.setEnabled(settings.isDebugOverlay());
         ZstdOverlayStats.setClientCompressionLevel(settings.effectiveCompressionLevel());
         Path configDir = FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject");
@@ -60,12 +61,24 @@ public class ZstdNeoForgeClient {
         }
     }
 
-    private static ZstdSettings loadConfig() {
+    /**
+     * Tells the server this client can decode zstd. Both encoders refuse to send zstd until their
+     * peer is known to speak it, so without this announcement a modded client and a modded server
+     * would each sit on vanilla zlib waiting for the other to go first. NeoForge negotiates
+     * channels during the configuration phase, so by the time we are logging in {@code hasChannel}
+     * already knows whether the server carries this mod.
+     */
+    private void announceCapability() {
         try {
-            return ConfigLoader.load(FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject").resolve("config.yml"));
+            Minecraft client = Minecraft.getInstance();
+            ClientPacketListener listener = client.getConnection();
+            if (listener == null || !listener.hasChannel(ZstdCapablePayload.TYPE)) {
+                return; // Vanilla server (or one without the mod): stay on zlib, say nothing.
+            }
+            ZstdNeoForgeSender.sendToServer(new ZstdCapablePayload(
+                    ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel())));
         } catch (Exception e) {
-            LOGGER.warn("Failed to load config.yml, using defaults: {}", e.getMessage());
-            return new ZstdSettings();
+            LOGGER.debug("Failed to announce zstd support", e);
         }
     }
 
@@ -84,6 +97,7 @@ public class ZstdNeoForgeClient {
                     return;
                 }
                 channel.eventLoop().execute(() -> PipelineInjector.injectClient(channel, settings));
+                announceCapability();
             }
         } catch (Exception e) {
             LOGGER.debug("Failed to inject Zstd handlers on client", e);

@@ -13,6 +13,7 @@ cd "$(dirname "$0")"
 
 dist="$(pwd)/dist"
 mkdir -p "$dist"
+failed=()
 
 # Clean up obsolete jars and old build logs
 rm -f "$dist"/*.jar
@@ -55,7 +56,14 @@ for version in "${versions[@]}"; do
   fi
 
   echo "=== Building Minecraft $version ==="
-  ./gradlew "${tasks[@]}" "${gradle_args[@]}"
+  # A failing version group must not abort the remaining groups (nor the Velocity
+  # build at the end); record it and keep going, then exit non-zero at the very end.
+  # This mirrors build-all.ps1, which already continues past a failed group.
+  if ! ./gradlew "${tasks[@]}" "${gradle_args[@]}" --console=plain; then
+    echo "BUILD FAILED for $version" >&2
+    failed+=("$version")
+    continue
+  fi
 
   for module in neoforge fabric paper; do
     if [ "$module" = "paper" ] && { [ -z "$paper_version" ] || [ "$paper_version" = "NONE" ]; }; then
@@ -69,10 +77,18 @@ for version in "${versions[@]}"; do
 done
 
 echo '=== Building Velocity ==='
-./gradlew :velocity:build --console=plain
+if ! ./gradlew :velocity:build --console=plain; then
+  echo "BUILD FAILED for velocity" >&2
+  failed+=("velocity")
+fi
 find velocity/build/libs -maxdepth 1 -name '*.jar' \
   ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
   -exec cp {} "$dist" \;
 
 echo "Artifacts in: $dist"
 ls -1 "$dist"
+
+if [ "${#failed[@]}" -gt 0 ]; then
+  echo "FAILED targets: ${failed[*]}" >&2
+  exit 1
+fi

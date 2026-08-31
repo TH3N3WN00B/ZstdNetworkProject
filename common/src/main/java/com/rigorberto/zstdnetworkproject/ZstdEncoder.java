@@ -36,7 +36,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     private final int compressionLevel;
     private final ZstdSettings settings;
     private final boolean peerZstdRequired;
-    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor();
+    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor(OrderedAsyncProcessor.Direction.OUTBOUND);
     private boolean closeCleanupAttached;
 
     public ZstdEncoder() {
@@ -181,6 +181,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
 
     /** Vanilla-compatible zlib fallback: {@code varint(uncompressedSize) + zlib stream}. Releases {@code in}. */
     private static void writeZlib(ChannelHandlerContext ctx, ByteBuf in, int readable, ChannelPromise promise) {
+        ByteBuf out = null;
         try {
             Deflater deflater = ZstdCodecCtx.deflater();
             deflater.reset();
@@ -192,21 +193,38 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
                 deflater.setInput(input);
             }
             deflater.finish();
-            int bound = ZstdCodecCtx.deflateBound(readable);
             int varIntLen = varIntLength(readable);
-            ByteBuf out = ctx.alloc().directBuffer(varIntLen + bound);
-            byte[] dst = ZstdCodecCtx.scratch(bound);
-            int size = deflater.deflate(dst);
-            if (size <= 0) {
-                out.release();
-                throw new IllegalStateException("zlib compression failed: " + size);
-            }
+            out = ctx.alloc().directBuffer(varIntLen + ZstdCodecCtx.deflateBound(readable));
             writeVarInt(out, readable);
-            out.writeBytes(dst, 0, size);
+            // deflate() fills at most dst.length bytes per call and gives no direct signal that it
+            // had more to write, so the loop must run until finished(): taking a single call's
+            // result would silently truncate the stream (and produce a frame whose size prefix no
+            // longer matches its payload) whenever deflateBound under-estimates.
+            byte[] dst = ZstdCodecCtx.scratch(8192);
+            while (!deflater.finished()) {
+                int size = deflater.deflate(dst);
+                if (size <= 0) {
+                    if (deflater.finished()) {
+                        break;
+                    }
+                    throw new IllegalStateException("zlib compression stalled: deflate() produced "
+                            + size + " bytes and is not finished (declaredSize=" + readable + ")");
+                }
+                out.writeBytes(dst, 0, size);
+            }
+            if (out.readableBytes() <= varIntLen) {
+                throw new IllegalStateException("zlib compression produced an empty stream for "
+                        + readable + " input bytes");
+            }
             PACKETS_COMPRESSED.increment();
             OUTPUT_BYTES.add(out.readableBytes());
-            ctx.write(out, promise);
+            ByteBuf frame = out;
+            out = null;
+            ctx.write(frame, promise);
         } catch (Throwable t) {
+            if (out != null) {
+                out.release();
+            }
             promise.tryFailure(t);
         } finally {
             in.release();
@@ -217,10 +235,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     private static void compressSync(ChannelHandlerContext ctx, ByteBuf in, int readable, int level,
                                      int workers, ZstdSettings settings, ChannelPromise promise) {
         try {
-            ByteBuf out = compressDirectOrCopy(ctx, in, readable, level, workers, settings);
-            if (out != null) {
-                ctx.write(out, promise);
-            }
+            ctx.write(compressDirectOrCopy(ctx, in, readable, level, workers, settings), promise);
         } catch (Throwable t) {
             promise.tryFailure(t);
         } finally {
@@ -229,8 +244,9 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     }
 
     /**
-     * Compresses the input synchronously into a pooled buffer. Returns null when the packet was
-     * sent raw instead (never-expand fallback).
+     * Compresses the input synchronously into a pooled buffer holding the complete
+     * {@code varint(uncompressedSize) + payload} frame (or {@code varint(0) + raw} when
+     * {@code compress-if-beneficial} rejects the compressed form).
      */
     private static ByteBuf compressDirectOrCopy(ChannelHandlerContext ctx, ByteBuf in, int readable,
                                                 int level, int workers, ZstdSettings settings) {
@@ -239,35 +255,45 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         int varIntLength = varIntLength(readable);
 
         ByteBuf out = ctx.alloc().directBuffer(varIntLength + bound);
-        ByteBuffer dst = out.nioBuffer(varIntLength, bound);
-        ByteBuffer src;
-        if (in.isDirect()) {
-            src = in.nioBuffer();
-        } else if (in.hasArray()) {
-            src = ByteBuffer.wrap(in.array(), in.arrayOffset() + in.readerIndex(), readable);
-        } else {
-            byte[] input = ZstdCodecCtx.scratch(readable);
-            in.getBytes(in.readerIndex(), input, 0, readable);
-            src = ByteBuffer.wrap(input, 0, readable);
-        }
+        // zstd-jni only accepts direct NIO buffers, so anything else (heap allocator, a composite
+        // whose nioBuffer() would merge into a heap buffer) is staged through a direct copy first.
+        ByteBuf staged = ZstdCodecCtx.isNativeReadable(in) ? null : ctx.alloc().directBuffer(readable);
+        try {
+            ByteBuffer dst = out.nioBuffer(varIntLength, bound);
+            ByteBuffer src;
+            if (staged == null) {
+                src = in.nioBuffer();
+            } else {
+                staged.writeBytes(in, in.readerIndex(), readable);
+                src = staged.nioBuffer();
+            }
 
-        int size = zctx.compress(dst, src);
-        if (size < 0) {
-            out.release();
-            throw new IllegalStateException("zstd compression failed: " + size);
-        }
+            int size = zctx.compress(dst, src);
+            if (size < 0) {
+                throw new IllegalStateException("zstd compression failed: " + size);
+            }
 
-        out.writerIndex(varIntLength + size);
-        writeVarIntAt(out, 0, readable);
-        if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-            out.clear();
-            writeVarInt(out, 0);
-            out.writeBytes(in, in.readerIndex(), readable);
-        } else {
-            PACKETS_COMPRESSED.increment();
+            out.writerIndex(varIntLength + size);
+            writeVarIntAt(out, 0, readable);
+            if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
+                out.clear();
+                writeVarInt(out, 0);
+                out.writeBytes(in, in.readerIndex(), readable);
+            } else {
+                PACKETS_COMPRESSED.increment();
+            }
+            OUTPUT_BYTES.add(out.readableBytes());
+            ByteBuf frame = out;
+            out = null;
+            return frame;
+        } finally {
+            if (staged != null) {
+                staged.release();
+            }
+            if (out != null) {
+                out.release();
+            }
         }
-        OUTPUT_BYTES.add(out.readableBytes());
-        return out;
     }
 
     private static final class RawWork implements OrderedAsyncProcessor.Work {
@@ -281,6 +307,11 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             this.msg = msg;
             this.readable = readable;
             this.promise = promise;
+        }
+
+        @Override
+        public int queuedBytes() {
+            return readable;
         }
 
         @Override
@@ -315,6 +346,11 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             this.in = in;
             this.readable = readable;
             this.promise = promise;
+        }
+
+        @Override
+        public int queuedBytes() {
+            return readable;
         }
 
         @Override
@@ -358,6 +394,11 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             this.workers = workers;
             this.settings = settings;
             this.promise = promise;
+        }
+
+        @Override
+        public int queuedBytes() {
+            return readable;
         }
 
         @Override

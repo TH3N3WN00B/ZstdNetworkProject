@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>pool size: {@code -Dzstdnetworkproject.workers=N} or env {@code ZSTDNETWORKPROJECT_WORKERS}</li>
  *   <li>threshold: {@code -Dzstdnetworkproject.async-threshold=N} or env
  *       {@code ZSTDNETWORKPROJECT_ASYNC_THRESHOLD}</li>
+ *   <li>per-channel queue limit: {@code -Dzstdnetworkproject.max-queued-bytes=N} or env
+ *       {@code ZSTDNETWORKPROJECT_MAX_QUEUED_BYTES} (see {@link OrderedAsyncProcessor})</li>
  * </ul>
  */
 public final class ZstdAsyncPools {
@@ -71,17 +73,35 @@ public final class ZstdAsyncPools {
     }
 
     private static int intValue(String sysProp, String env, int fallback) {
-        String raw = System.getProperty(sysProp);
-        if (raw == null) {
-            raw = System.getenv(env);
-        }
+        String raw = rawValue(sysProp, env);
         if (raw == null) {
             return fallback;
         }
         try {
-            return Integer.parseInt(raw.trim());
+            return Integer.parseInt(raw);
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    /** Same lookup as {@link #intValue}, for settings whose sensible range exceeds an int. */
+    static long longValue(String sysProp, String env, long fallback, long min) {
+        String raw = rawValue(sysProp, env);
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return Math.max(min, Long.parseLong(raw));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static String rawValue(String sysProp, String env) {
+        String raw = System.getProperty(sysProp);
+        if (raw == null) {
+            raw = System.getenv(env);
+        }
+        return raw == null ? null : raw.trim();
     }
 }

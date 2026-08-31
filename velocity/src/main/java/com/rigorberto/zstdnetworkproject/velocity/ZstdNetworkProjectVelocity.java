@@ -36,8 +36,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -160,12 +162,32 @@ public class ZstdNetworkProjectVelocity {
         // reached post-login (e.g. failed auth), so the map cannot grow with dead usernames.
         zstdCapable.remove(username);
         zstdClientLevels.remove(username);
+        pruneDeadEntries(username);
         login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
                 ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
                 response -> {
                     zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response));
                     zstdClientLevels.put(username, ZstdNegotiation.extractCompressionLevel(response, -1));
                 });
+    }
+
+    /**
+     * Drops capability entries for players who are neither online nor currently logging in.
+     * {@link DisconnectEvent} only fires for connections that became players, so a login that is
+     * denied after the capability callback has already run (failed auth, a kick from another
+     * plugin, a dropped connection) would otherwise leave its username in the maps forever.
+     */
+    private void pruneDeadEntries(String loggingIn) {
+        if (zstdCapable.isEmpty()) {
+            return;
+        }
+        Set<String> keep = new HashSet<>();
+        keep.add(loggingIn);
+        for (Player player : proxy.getAllPlayers()) {
+            keep.add(player.getUsername());
+        }
+        zstdCapable.keySet().removeIf(name -> !keep.contains(name));
+        zstdClientLevels.keySet().removeIf(name -> !keep.contains(name));
     }
 
     @Subscribe

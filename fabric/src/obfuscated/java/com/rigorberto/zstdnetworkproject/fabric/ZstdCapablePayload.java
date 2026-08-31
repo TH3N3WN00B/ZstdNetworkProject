@@ -20,7 +20,7 @@ import net.minecraft.util.Identifier;
 public record ZstdCapablePayload(byte[] data) implements CustomPayload {
 
     public static final CustomPayload.Id<ZstdCapablePayload> TYPE =
-            new CustomPayload.Id<>(Identifier.tryParse(ZstdNegotiation.CHANNEL));
+            new CustomPayload.Id<>(channelId());
 
     public static final PacketCodec<ByteBuf, ZstdCapablePayload> CODEC = PacketCodec.of(
             (ValueFirstEncoder<ByteBuf, ZstdCapablePayload>) (payload, buf) -> buf.writeBytes(payload.data),
@@ -29,6 +29,12 @@ public record ZstdCapablePayload(byte[] data) implements CustomPayload {
                 buf.readBytes(raw);
                 return new ZstdCapablePayload(raw);
             });
+
+    /** Fails loudly at class-init instead of letting a null id surface as an NPE much later. */
+    private static Identifier channelId() {
+        return java.util.Objects.requireNonNull(Identifier.tryParse(ZstdNegotiation.CHANNEL),
+                "invalid zstd capability channel id: " + ZstdNegotiation.CHANNEL);
+    }
 
     @Override
     public CustomPayload.Id<ZstdCapablePayload> getId() {

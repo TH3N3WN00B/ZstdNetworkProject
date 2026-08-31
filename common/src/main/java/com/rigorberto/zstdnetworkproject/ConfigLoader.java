@@ -69,8 +69,8 @@ public final class ConfigLoader {
             "# A larger value can speed up huge packets (e.g. chunks) at the cost of CPU usage.\n" +
             "hardware-acceleration-threads: 0",
             "# Packets smaller than this (uncompressed bytes) are sent uncompressed.\n" +
-            "# Must be at least 256, so that every packet this encoder compresses is decoded\n" +
-            "# as zstd rather than zlib by peers.\n" +
+            "# Must be at least 256: below that the frame overhead usually costs more\n" +
+            "# than the compression saves.\n" +
             "compression-threshold: 256",
             "# Send a packet uncompressed when compression would not actually shrink it.\n" +
             "# Incompressible data (e.g. already-compressed textures or chunk section data)\n" +
@@ -108,7 +108,10 @@ public final class ConfigLoader {
 
     public static ZstdSettings load(Path configFile) throws IOException {
         if (!Files.isRegularFile(configFile)) {
-            Files.createDirectories(configFile.getParent());
+            Path parent = configFile.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
             Files.writeString(configFile, DEFAULT_CONFIG, StandardCharsets.UTF_8);
         } else {
             updateConfig(configFile);

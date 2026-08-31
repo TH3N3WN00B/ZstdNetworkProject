@@ -6,13 +6,22 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ReflectionUtil {
 
-    private static final Map<String, Field> FIELD_CACHE = new ConcurrentHashMap<>();
+    /**
+     * Keyed by the {@link Class} object itself, not its name: Minecraft runtimes routinely load the
+     * same class name in several class loaders (mod loaders, plugin loaders, remapped and
+     * unremapped views), and a name-keyed cache would hand back a {@link Field} declared by a
+     * different {@code Class}, which then fails with {@code IllegalArgumentException} on access.
+     */
+    private record FieldKey(Class<?> owner, String name) {
+    }
+
+    private static final Map<FieldKey, Field> FIELD_CACHE = new ConcurrentHashMap<>();
 
     private ReflectionUtil() {
     }
 
     public static Field findField(Class<?> clazz, String name) throws NoSuchFieldException {
-        String key = clazz.getName() + '#' + name;
+        FieldKey key = new FieldKey(clazz, name);
         Field cached = FIELD_CACHE.get(key);
         if (cached != null) {
             return cached;

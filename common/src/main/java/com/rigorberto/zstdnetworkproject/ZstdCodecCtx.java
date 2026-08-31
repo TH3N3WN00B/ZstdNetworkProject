@@ -83,9 +83,25 @@ final class ZstdCodecCtx {
         return buf;
     }
 
-    /** Reusable zlib deflater (used for the vanilla-compatible zlib fallback encoder). */
+    /**
+     * Reusable zlib deflater for the vanilla-compatible fallback encoder. Deliberately left at the
+     * JDK default level: vanilla Minecraft's {@code CompressionEncoder} also uses a plain
+     * {@code new Deflater()}, and the configured zstd level (1-22, or negative in fast mode) has no
+     * meaningful translation into zlib's 0-9 scale.
+     */
     static Deflater deflater() {
         return DEFLATER.get();
+    }
+
+    /**
+     * Whether {@code buf}'s memory can be handed straight to zstd-jni. Its {@code ByteBuffer} entry
+     * points reject non-direct buffers ({@code IllegalArgumentException: srcBuff must be a direct
+     * buffer}), and {@link io.netty.buffer.ByteBuf#nioBuffer()} on a direct <em>composite</em> with
+     * more than one component returns a merged <em>heap</em> buffer, so checking
+     * {@link io.netty.buffer.ByteBuf#isDirect()} alone is not enough.
+     */
+    static boolean isNativeReadable(io.netty.buffer.ByteBuf buf) {
+        return buf.isDirect() && buf.nioBufferCount() == 1;
     }
 
     /** Upper bound on the size of a zlib stream for {@code size} input bytes. */

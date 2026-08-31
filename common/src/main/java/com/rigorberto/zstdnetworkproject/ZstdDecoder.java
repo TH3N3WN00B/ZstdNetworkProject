@@ -27,7 +27,13 @@ import java.util.zip.Inflater;
  */
 public class ZstdDecoder extends ByteToMessageDecoder {
 
-    public static final long MAX_UNCOMPRESSED_SIZE = 64L * 1024 * 1024;
+    /**
+     * Largest declared uncompressed frame size accepted from a peer. Matches vanilla
+     * {@code CompressionDecoder.MAXIMUM_UNCOMPRESSED_LENGTH}: the decompression buffer is allocated
+     * from this declared value <em>before</em> the frame is validated, so a larger bound would let
+     * a peer commit that much direct memory per frame at almost no bandwidth cost.
+     */
+    public static final long MAX_UNCOMPRESSED_SIZE = 8L * 1024 * 1024;
 
     /** First four bytes of every zstd frame. */
     private static final byte[] ZSTD_MAGIC = {(byte) 0x28, (byte) 0xB5, (byte) 0x2F, (byte) 0xFD};
@@ -42,7 +48,7 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     private static final ThreadLocal<Inflater> INFLATER_THREAD_LOCAL =
             ThreadLocal.withInitial(Inflater::new);
 
-    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor();
+    private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor(OrderedAsyncProcessor.Direction.INBOUND);
     private boolean warnedRawFrame;
 
     @Override
@@ -159,7 +165,9 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         ByteBuffer dst = out.nioBuffer(0, size);
         try {
             int n;
-            if (in.isDirect()) {
+            // isDirect() alone is not enough: nioBuffer() on a multi-component direct composite
+            // returns a merged HEAP buffer, which zstd-jni rejects.
+            if (ZstdCodecCtx.isNativeReadable(in)) {
                 n = zctx.decompress(dst, in.nioBuffer());
             } else if (in.hasArray()) {
                 n = zctx.decompressByteArrayToDirectByteBuffer(
@@ -338,10 +346,17 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     private static final class RawWork implements OrderedAsyncProcessor.Work {
         private final ChannelHandlerContext ctx;
         private final ByteBuf raw;
+        private final int queuedBytes;
 
         RawWork(ChannelHandlerContext ctx, ByteBuf raw) {
             this.ctx = ctx;
             this.raw = raw;
+            this.queuedBytes = raw.readableBytes();
+        }
+
+        @Override
+        public int queuedBytes() {
+            return queuedBytes;
         }
 
         @Override
@@ -381,6 +396,11 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         }
 
         @Override
+        public int queuedBytes() {
+            return input.length;
+        }
+
+        @Override
         public boolean isAsync() {
             return false;
         }
@@ -408,12 +428,21 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         private final OrderedAsyncProcessor processor;
         private final ByteBuf in;
         private final int size;
+        private final int queuedBytes;
 
         ZstdWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in, int size) {
             this.ctx = ctx;
             this.processor = processor;
             this.in = in;
             this.size = size;
+            // Charge the queue for what the decompressed frame will cost, not for the compressed
+            // bytes we are holding: that is the memory a peer can actually make us commit.
+            this.queuedBytes = Math.max(in.readableBytes(), size);
+        }
+
+        @Override
+        public int queuedBytes() {
+            return queuedBytes;
         }
 
         @Override

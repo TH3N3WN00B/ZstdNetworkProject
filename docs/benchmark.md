@@ -48,4 +48,5 @@ Propiedades de sistema / variables de entorno para entornos específicos (especi
 |---|---|---|
 | `-Dzstdnetworkproject.workers=N` / `ZSTDNETWORKPROJECT_WORKERS` | `max(2, min(8, cpus/2))` | Tamaño del pool de workers asíncronos (1–64). |
 | `-Dzstdnetworkproject.async-threshold=N` / `ZSTDNETWORKPROJECT_ASYNC_THRESHOLD` | `65536` (64 KiB, mín. 256) | Paquetes ≥ este tamaño se (des)comprimen fuera del event loop. |
+| `-Dzstdnetworkproject.max-queued-bytes=N` / `ZSTDNETWORKPROJECT_MAX_QUEUED_BYTES` | `16777216` (16 MiB, mín. 64 KiB) | Bytes de paquetes en espera por conexión antes de cerrarla (el par no está leyendo). |
 | `-Dzstdnetworkproject.trace-file=<ruta>` | desactivado | Vuelca trazas de frames (cabeceras/tail hex) al archivo. Solo para depurar. |

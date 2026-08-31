@@ -20,9 +20,10 @@ public final class ZstdSettings {
     public static final List<String> DEFAULT_AUTO_DISABLE_MODS = List.of();
 
     /**
-     * Packets smaller than this (uncompressed bytes) are never compressed. Must be at least 256:
-     * the decoder decides zstd vs zlib by whether the declared uncompressed size is at least 256,
-     * so anything this encoder compresses must be >= 256.
+     * Packets smaller than this (uncompressed bytes) are never compressed. Floored at 256 because
+     * below that the frame header plus zstd's own frame overhead routinely costs more than the
+     * compression saves. (The decoder does not depend on this value: it picks zstd or zlib by
+     * sniffing the frame magic, so it decodes any threshold a peer chooses.)
      */
     public static final int MIN_COMPRESSION_THRESHOLD = 256;
 
