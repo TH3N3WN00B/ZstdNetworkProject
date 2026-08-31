@@ -1,0 +1,65 @@
+plugins {
+    id 'java-library'
+    id 'net.minecraftforge.gradle' version '[7.0.17,8)'
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+minecraft {
+    runs {
+        configureEach {
+            workingDir = layout.projectDirectory.dir('run')
+            systemProperty 'eventbus.api.strictRuntimeChecks', 'true'
+        }
+        register('client') { }
+        register('server') {
+            args '--nogui'
+        }
+    }
+}
+
+// The client debug overlay hooks render APIs that changed between eras, so each
+// build compiles only its own overlay implementation, mirroring the neoforge and
+// fabric module layouts.
+def overlaySrc = project.minecraft_version.startsWith('26.') ? 'unobfuscated' : 'obfuscated'
+sourceSets.main.java.srcDirs += file("src/${overlaySrc}/java")
+
+dependencies {
+    implementation project(':common')
+    implementation "com.github.luben:zstd-jni:${project.zstd_version}"
+    implementation minecraft.dependency("net.minecraftforge:forge:${project.forge_version}")
+    annotationProcessor 'net.minecraftforge:eventbus-validator:7.0.5'
+}
+
+jar {
+    dependsOn project(':common').jar
+    manifest {
+        attributes(
+            'Mod-Container': 'com.rigorberto.zstdnetworkproject.forge.ZstdNetworkProjectForge',
+            'Mod-Version': project.version,
+            'Implementation-Version': project.version
+        )
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from('src/main/resources') {
+        include 'META-INF/mods.toml'
+    }
+    from(zipTree(project(':common').jar.archiveFile)) {
+        include 'com/rigorberto/zstdnetworkproject/**'
+        exclude 'com/rigorberto/zstdnetworkproject/**/fabric/**'
+        exclude 'com/rigorberto/zstdnetworkproject/**/neoforge/**'
+        exclude 'com/rigorberto/zstdnetworkproject/**/paper/**'
+        exclude 'com/rigorberto/zstdnetworkproject/**/velocity/**'
+    }
+    def zstdVersion = project.zstd_version
+    def runtimeClasspath = configurations.runtimeClasspath
+    from {
+        def zstd = runtimeClasspath.find { it.name == "zstd-jni-${zstdVersion}.jar" }
+        zstd ? zipTree(zstd).matching { exclude 'META-INF/MANIFEST.MF' } : []
+    }
+}

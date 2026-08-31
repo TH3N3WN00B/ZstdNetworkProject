@@ -12,6 +12,10 @@ pluginManagement {
             name = 'Paper'
             url = 'https://repo.papermc.io/repository/maven-public/'
         }
+        maven {
+            name = 'Forge'
+            url = 'https://maven.minecraftforge.net/'
+        }
         gradlePluginPortal()
     }
 }
@@ -30,8 +34,20 @@ include 'neoforge'
 include 'paper'
 include 'velocity'
 
+// The forge module is scoped to Minecraft 26.2 for now (ForgeGradle 7), which is a
+// different plugin/toolchain than the 1.21.x era, so it is only included for builds
+// targeting a Forge-supported version.
+def mcVersion = gradle.startParameter.projectProperties.get('minecraft_version') ?: '1.21.11'
+def forgeSupported = ['26.2'].contains(mcVersion)
+if (forgeSupported) {
+    include 'forge'
+}
+
 project(':common').projectDir = file('common')
 project(':fabric').projectDir = file('fabric')
 project(':neoforge').projectDir = file('neoforge')
 project(':paper').projectDir = file('paper')
 project(':velocity').projectDir = file('velocity')
+if (forgeSupported) {
+    project(':forge').projectDir = file('forge')
+}

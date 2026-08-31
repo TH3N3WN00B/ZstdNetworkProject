@@ -28,22 +28,22 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 
 ## Compatibilidad
 
-| Minecraft | Java | NeoForge | Fabric | Paper | Velocity |
-|---|---|---|---|---|---|
-| 1.21.4 – 1.21.11 (ofuscado) | 21 | ✓ | ✓ | ✓* | ✓ |
-| 26.1 / 26.1.2 / 26.2 (sin ofuscar) | 25 | ✓ | ✓ | ✓* | ✓ |
+| Minecraft | Java | NeoForge | Forge | Fabric | Paper | Velocity |
+|---|---|---|---|---|---|---|
+| 1.21.4 – 1.21.11 (ofuscado) | 21 | ✓ | ✗ | ✓ | ✓* | ✓ |
+| 26.1 / 26.1.2 / 26.2 (sin ofuscar) | 25 | ✓ | ✓ (solo 26.2) | ✓ | ✓* | ✓ |
 
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2 y 26.2.
 
-Artefactos: `zstd-neoforge-beta-1.1-mc<version>.jar`, `zstd-fabric-beta-1.1-mc<version>.jar`,
-`zstd-paper-beta-1.1-mc<version>.jar`, `zstd-velocity-beta-1.1.jar` (Velocity es independiente de la versión
-de MC). En `dist/` tras compilar.
+Artefactos: `zstd-neoforge-beta-1.1-mc<version>.jar`, `zstd-forge-beta-1.1-mc26.2.jar`,
+`zstd-fabric-beta-1.1-mc<version>.jar`, `zstd-paper-beta-1.1-mc<version>.jar`,
+`zstd-velocity-beta-1.1.jar` (Velocity es independiente de la versión de MC). En `dist/` tras compilar.
 
 ## Instalación
 
 | Plataforma | Dónde va el jar | Config |
 |---|---|---|
-| **NeoForge/Fabric** (servidor y cliente) | `mods/` (Fabric requiere Fabric API) | `config/zstdnetworkproject/config.yml` |
+| **NeoForge/Forge/Fabric** (servidor y cliente) | `mods/` (Fabric requiere Fabric API) | `config/zstdnetworkproject/config.yml` |
 | **Paper** (servidor) | `plugins/` | `plugins/ZstdNetworkProject/config.yml` |
 | **Velocity** (proxy) | `plugins/` | `plugins/zstdnetworkproject/config.yml` |
 
@@ -55,6 +55,13 @@ Con Velocity instala también el mod en el cliente para que negocie zstd; los va
 > El **cliente NeoForge** sigue sin poder responder la consulta de login (NeoForge no expone API de red en
 > fase de login), así que los jugadores NeoForge conectados *a través del proxy* usan zlib vanilla.
 > El servidor dedicado NeoForge (sin proxy) sí comprime con zstd.
+>
+> **Forge (26.2)**: el port está en la rama `Forge-Test`. La inyección Netty cliente/servidor funciona igual
+> que NeoForge (Forge↔Forge directo con zstd). La negociación play-phase con un peer *vanilla* (Paper/Velocity)
+> es **best-effort y sin verificar**: el canal `zstdnetworkproject:capable` se registra como payload de Forge,
+> pero el stack de red de Forge está diseñado para dialogar Forge↔Forge, así que no se garantiza que un servidor
+> vanilla Paper reconozca el sondeo. Si falla, solo se desactiva el handshake de capacidad; el cliente Forge
+> sigue siendo pasivo y compatible con servidores vanilla.
 
 ## Configuración
 
