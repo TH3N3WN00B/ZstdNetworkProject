@@ -28,13 +28,32 @@ dependencies {
     implementation "com.github.luben:zstd-jni:${project.zstd_version}"
 }
 
+// NeoForge requires a strict Maven/semver version number (e.g. 2.0.0) in the
+// jar manifest and mods.toml. The project's release version is a free-form
+// string like "beta-2.0" (fine for Fabric/Paper), so map it to a numeric
+// version here. The jar file name itself keeps the beta-2.0 tag.
+//
+// Supported forms (other strings fall back to project.version as-is):
+//   beta-2.0     -> 2.0.0
+//   alpha-1.5    -> 1.5.0
+//   rc-3.1       -> 3.1.0
+//   2.0.0        -> 2.0.0
+def mavenVersion = { String v ->
+    def m = (v =~ /(?i)^(?:beta|alpha|rc|snapshot)-\s*(\d+)\.(\d+)(?:\.(\d+))?\s*$/)
+    if (m.find()) {
+        def patch = m.group(3) ?: '0'
+        return "${m.group(1)}.${m.group(2)}.${patch}"
+    }
+    return v
+}(project.version as String)
+
 jar {
     dependsOn project(':common').jar
     manifest {
         attributes(
             'Mod-Container': 'com.rigorberto.zstdnetworkproject.neoforge.ZstdNetworkProjectNeoForge',
-            'Mod-Version': project.version,
-            'Implementation-Version': project.version
+            'Mod-Version': mavenVersion,
+            'Implementation-Version': mavenVersion
         )
     }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
