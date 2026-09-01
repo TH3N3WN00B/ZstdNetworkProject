@@ -11,6 +11,8 @@ import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -21,8 +23,11 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.neoforged.neoforge.network.handling.IPayloadHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.lang.reflect.Method;
 
 @Mod("zstdnetworkproject")
 public class ZstdNetworkProjectNeoForge {
@@ -91,20 +96,29 @@ public class ZstdNetworkProjectNeoForge {
      * carrying this mod can still join a server without it (and vice versa) instead of being
      * rejected over a missing channel.
      *
-     * <p>Registered as two separate directional payloads ({@code playToServer}/{@code playToClient})
-     * rather than a single-handler {@code playBidirectional}: since NeoForge 1.21.6 the single-handler
-     * {@code playBidirectional} registers only the server-side handler, and NeoForge refuses to start
-     * when a clientbound payload has no client-side handler ("Some clientbound payloads are missing
-     * client-side handlers: [zstdnetworkproject:capable]").
+     * <p>Registered once via {@code playBidirectional}. Since the single-handler overload only
+     * registers the server side from NeoForge 1.21.6 (causing the "Some clientbound payloads are
+     * missing client-side handlers" startup failure) and the two-handler overload did not exist
+     * before 1.21.6, the two-handler overload is invoked reflectively when available and falls
+     * back to the single-handler overload on older versions.
      */
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar("1").optional();
-        registrar.playToServer(
-                ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC,
-                (payload, context) -> onCapabilityAnnounced(context));
-        registrar.playToClient(
-                ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC,
-                (payload, context) -> onCapabilityAnnounced(context));
+        IPayloadHandler<ZstdCapablePayload> handler =
+                (payload, context) -> onCapabilityAnnounced(context);
+        try {
+            Method twoHandlers = registrar.getClass().getMethod(
+                    "playBidirectional",
+                    CustomPacketPayload.Type.class, StreamCodec.class,
+                    IPayloadHandler.class, IPayloadHandler.class);
+            twoHandlers.invoke(registrar,
+                    ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC, handler, handler);
+        } catch (NoSuchMethodException e) {
+            registrar.playBidirectional(
+                    ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC, handler);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to register zstd capability payload", e);
+        }
     }
 
     /**
