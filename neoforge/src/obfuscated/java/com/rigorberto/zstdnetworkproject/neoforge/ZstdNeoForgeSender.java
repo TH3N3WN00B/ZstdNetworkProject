@@ -25,10 +25,30 @@ final class ZstdNeoForgeSender {
             Class<?> cls = ReflectionUtil.classExists("net.neoforged.neoforge.client.network.ClientPacketDistributor")
                     ? Class.forName("net.neoforged.neoforge.client.network.ClientPacketDistributor")
                     : Class.forName("net.neoforged.neoforge.network.PacketDistributor");
-            return cls.getMethod("sendToServer", CustomPacketPayload.class);
+            return findSendToServer(cls);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
+    }
+
+    /**
+     * Both {@code PacketDistributor} (1.21.4–1.21.6) and {@code ClientPacketDistributor} (1.21.7+)
+     * declare {@code sendToServer} as a varargs method:
+     * {@code sendToServer(CustomPacketPayload payload, CustomPacketPayload... payloads)}. Because the
+     * extra varargs parameter changes the erased signature, a plain
+     * {@code getMethod("sendToServer", CustomPacketPayload.class)} lookup throws
+     * {@code NoSuchMethodException}; instead match by name and first parameter type so the call
+     * keeps working across eras regardless of the exact signature.
+     */
+    private static Method findSendToServer(Class<?> cls) throws NoSuchMethodException {
+        for (Method method : cls.getMethods()) {
+            if ("sendToServer".equals(method.getName())
+                    && method.getParameterCount() >= 1
+                    && method.getParameterTypes()[0] == CustomPacketPayload.class) {
+                return method;
+            }
+        }
+        throw new NoSuchMethodException(cls.getName() + ".sendToServer(CustomPacketPayload)");
     }
 
     private ZstdNeoForgeSender() {
@@ -36,7 +56,10 @@ final class ZstdNeoForgeSender {
 
     static void sendToServer(CustomPacketPayload payload) {
         try {
-            SEND.invoke(null, payload);
+            Object[] args = SEND.getParameterCount() >= 2
+                    ? new Object[]{payload, new CustomPacketPayload[0]}
+                    : new Object[]{payload};
+            SEND.invoke(null, args);
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException("Failed to send zstd capability payload", e);
         }
