@@ -90,9 +90,19 @@ public class ZstdNetworkProjectNeoForge {
      * Registers the capability payload in both directions. Marked {@code optional()} so a client
      * carrying this mod can still join a server without it (and vice versa) instead of being
      * rejected over a missing channel.
+     *
+     * <p>Registered as two separate directional payloads ({@code playToServer}/{@code playToClient})
+     * rather than a single-handler {@code playBidirectional}: since NeoForge 1.21.6 the single-handler
+     * {@code playBidirectional} registers only the server-side handler, and NeoForge refuses to start
+     * when a clientbound payload has no client-side handler ("Some clientbound payloads are missing
+     * client-side handlers: [zstdnetworkproject:capable]").
      */
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        event.registrar("1").optional().playBidirectional(
+        var registrar = event.registrar("1").optional();
+        registrar.playToServer(
+                ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC,
+                (payload, context) -> onCapabilityAnnounced(context));
+        registrar.playToClient(
                 ZstdCapablePayload.TYPE, ZstdCapablePayload.CODEC,
                 (payload, context) -> onCapabilityAnnounced(context));
     }
