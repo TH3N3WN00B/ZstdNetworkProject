@@ -29,6 +29,8 @@ else
   versions=("$@")
 fi
 
+mod_version="$(grep '^mod_version=' gradle.properties | cut -d= -f2 | tr -d ' \r\n')"
+
 for version in "${versions[@]}"; do
   props="gradle-mc${version}.properties"
   if [ ! -f "$props" ]; then
@@ -71,19 +73,21 @@ for version in "${versions[@]}"; do
     fi
     find "$module/build/libs" -maxdepth 1 -name '*.jar' \
       ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
-      -name "*mc${version}.jar" \
+      -name "*-$mod_version-mc${version}.jar" \
       -exec cp {} "$dist" \;
   done
 done
 
 echo '=== Building Velocity ==='
-if ! ./gradlew :velocity:build --console=plain; then
+if ./gradlew :velocity:build --console=plain; then
+  find velocity/build/libs -maxdepth 1 -name '*.jar' \
+    ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
+    -name "*-$mod_version.jar" \
+    -exec cp {} "$dist" \;
+else
   echo "BUILD FAILED for velocity" >&2
   failed+=("velocity")
 fi
-find velocity/build/libs -maxdepth 1 -name '*.jar' \
-  ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
-  -exec cp {} "$dist" \;
 
 echo "Artifacts in: $dist"
 ls -1 "$dist"

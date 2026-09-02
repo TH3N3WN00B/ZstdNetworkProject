@@ -24,6 +24,10 @@ if ($Versions.Count -eq 0) {
         ForEach-Object { $_.BaseName -replace '^gradle-mc', '' } | Sort-Object
 }
 
+$currentModVersion = (Get-Content (Join-Path $root 'gradle.properties') |
+    Where-Object { $_ -match '^\s*mod_version\s*=\s*(.+?)\s*$' } |
+    ForEach-Object { $matches[1].Trim() })
+
 foreach ($version in $Versions) {
     $props = Join-Path $root "gradle-mc$version.properties"
     if (-not (Test-Path $props)) {
@@ -70,7 +74,7 @@ foreach ($version in $Versions) {
         $libs = Join-Path $root "$module\build\libs"
         if (Test-Path $libs) {
             Get-ChildItem $libs -Filter '*.jar' -File |
-                Where-Object { $_.Name -notmatch 'sources|javadoc|dev' -and $_.Name -like "*mc$version.jar" } |
+                Where-Object { $_.Name -notmatch 'sources|javadoc|dev' -and $_.Name -like "*-$currentModVersion-mc$version.jar" } |
                 Copy-Item -Destination $dist -Force
         }
     }
@@ -84,7 +88,7 @@ $code = $LASTEXITCODE
 Pop-Location
 if ($code -eq 0) {
     Get-ChildItem (Join-Path $root 'velocity\build\libs') -Filter '*.jar' -File |
-        Where-Object { $_.Name -notmatch 'sources|javadoc|dev' } |
+        Where-Object { $_.Name -notmatch 'sources|javadoc|dev' -and $_.Name -like "*-$currentModVersion.jar" } |
         Copy-Item -Destination $dist -Force
 }
 
