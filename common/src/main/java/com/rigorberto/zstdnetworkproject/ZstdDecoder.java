@@ -27,6 +27,9 @@ import java.util.zip.Inflater;
  */
 public class ZstdDecoder extends ByteToMessageDecoder {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger("zstdnetworkproject");
+
     /**
      * Largest declared uncompressed frame size accepted from a peer. Matches vanilla
      * {@code CompressionDecoder.MAXIMUM_UNCOMPRESSED_LENGTH}: the decompression buffer is allocated
@@ -248,10 +251,10 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         } catch (NotZlibException e) {
             if (!warnedRawFrame) {
                 warnedRawFrame = true;
-                System.err.println("[zstdnetworkproject] Peer sent an uncompressed frame without "
-                        + "the compression size prefix (non-vanilla server or proxy); restoring the "
-                        + "misread " + header.length + " prefix byte(s) so the packet stays intact. "
-                        + e.getMessage());
+                LOGGER.warn("Peer sent an uncompressed frame without the compression size prefix "
+                        + "(non-vanilla server or proxy); restoring the misread {} prefix byte(s) so "
+                        + "the packet stays intact. {}",
+                        header.length, e.getMessage());
             }
             if (HexDump.isEnabled()) {
                 HexDump.note("frame-in", "IN pass-through repaired (payload is not zlib, restored "

@@ -21,6 +21,9 @@ import java.util.ArrayDeque;
  */
 final class OrderedAsyncProcessor {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger("zstdnetworkproject");
+
     /** Whether drained work is dispatched inbound (decoder) or outbound (encoder). */
     enum Direction {
         /** Decoded packets were pushed with {@code fireChannelRead}: close the read cycle. */
@@ -90,10 +93,10 @@ final class OrderedAsyncProcessor {
         rejected.discard();
         if (!overflowed) {
             overflowed = true;
-            System.err.println("[zstdnetworkproject] Closing connection to " + ctx.channel().remoteAddress()
-                    + ": more than " + MAX_QUEUED_BYTES + " bytes of packets are waiting for "
+            LOGGER.warn("Closing connection to {}: more than {} bytes of packets are waiting for "
                     + "(de)compression, which means the peer is not reading. Raise "
-                    + "-Dzstdnetworkproject.max-queued-bytes if this is a legitimate workload.");
+                    + "-Dzstdnetworkproject.max-queued-bytes if this is a legitimate workload.",
+                    ctx.channel().remoteAddress(), MAX_QUEUED_BYTES);
         }
         discardAll();
         ctx.close();

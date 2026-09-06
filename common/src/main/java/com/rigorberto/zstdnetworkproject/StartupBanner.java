@@ -10,6 +10,8 @@ package com.rigorberto.zstdnetworkproject;
  */
 public final class StartupBanner {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("zstdnetworkproject");
+
     private static final String BLUE = "\u001B[34m";
     private static final String WHITE = "\u001B[37m";
     private static final String RESET = "\u001B[0m";
@@ -27,22 +29,23 @@ public final class StartupBanner {
     private StartupBanner() {
     }
 
-    /** Version from the containing jar's manifest, or {@code beta-2.2} when unavailable (IDE runs). */
+    /** Version from the containing jar's manifest, or {@code beta-0.2.3} when unavailable (IDE runs). */
     private static String resolveVersion() {
         try {
             Package pkg = StartupBanner.class.getPackage();
             String version = pkg == null ? null : pkg.getImplementationVersion();
-            return version != null ? version : "ZstdNetworkProject beta-2.2";
+            return version != null ? version : "ZstdNetworkProject beta-0.2.3";
         } catch (Throwable t) {
-            return "ZstdNetworkProject beta-2.2";
+            return "ZstdNetworkProject beta-0.2.3";
         }
     }
 
     public static void print() {
+        StringBuilder sb = new StringBuilder();
         for (String line : ART) {
-            System.out.println(BLUE + line + RESET);
+            sb.append(BLUE).append(line).append(RESET).append(System.lineSeparator());
         }
-        System.out.println();
-        System.out.println(WHITE + FOOTER + RESET);
+        sb.append(System.lineSeparator()).append(WHITE).append(FOOTER).append(RESET);
+        LOGGER.info(sb.toString());
     }
 }
