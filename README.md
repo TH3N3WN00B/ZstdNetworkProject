@@ -3,7 +3,7 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-2.2 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-0.2.3 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
@@ -35,8 +35,8 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2 y 26.2.
 
-Artefactos: `zstd-neoforge-beta-2.2-mc<version>.jar`, `zstd-fabric-beta-2.2-mc<version>.jar`,
-`zstd-paper-beta-2.2-mc<version>.jar`, `zstd-velocity-beta-2.2.jar` (Velocity es independiente de la versión
+Artefactos: `zstd-neoforge-beta-0.2.3-mc<version>.jar`, `zstd-fabric-beta-0.2.3-mc<version>.jar`,
+`zstd-paper-beta-0.2.3-mc<version>.jar`, `zstd-velocity-beta-0.2.3.jar` (Velocity es independiente de la versión
 de MC). En `dist/` tras compilar.
 
 ## Instalación
