@@ -24,6 +24,7 @@ public final class ConfigLoader {
     public static final String KEY_DISABLED_SERVERS = "disabled-servers";
     public static final String KEY_AUTO_DISABLE_MODS = "auto-disable-mods";
     public static final String KEY_HEX_DUMP = "hex-dump";
+    public static final String KEY_MATCH_SERVER_LEVEL = "match-server-level";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
@@ -37,7 +38,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 8;
+    public static final int CONFIG_VERSION = 9;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -93,7 +94,12 @@ public final class ConfigLoader {
             "# (sizes, direction, peer address and full hex). Only for diagnosing protocol\n" +
             "# problems with custom servers; adds I/O overhead and grows the log fast.\n" +
             "# Disabled by default.\n" +
-            "hex-dump: false"
+            "hex-dump: false",
+            "# When a server announces a higher zstd compression level than this client's\n" +
+            "# (Velocity in the login query, Paper in the play query), compress uploads at\n" +
+            "# that higher level. Only ever raises the level, never lowers it, and has no\n" +
+            "# effect in fast mode. Client-side only. Disabled by default.\n" +
+            "match-server-level: false"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -148,6 +154,7 @@ public final class ConfigLoader {
                 ? ZstdSettings.DEFAULT_AUTO_DISABLE_MODS
                 : parseList(autoDisableMods));
         settings.setHexDump(parseBoolean(values.get(KEY_HEX_DUMP), false));
+        settings.setMatchServerLevel(parseBoolean(values.get(KEY_MATCH_SERVER_LEVEL), false));
         return settings;
     }
 

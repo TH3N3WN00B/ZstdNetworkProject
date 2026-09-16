@@ -98,11 +98,18 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             return;
         }
 
+        // The configured level is resolved once per write when match-server-level is on, because
+        // the server's level arrives mid-handshake (login/play query), after the encoder is created.
+        int level = compressionLevel;
+        if (settings.isMatchServerLevel()) {
+            level = ZstdPeerLevel.effectiveLevel(ctx.channel(), level);
+        }
+
         if (processor.isIdle() && readable < ZstdAsyncPools.ASYNC_THRESHOLD) {
-            compressSync(ctx, in, readable, compressionLevel, settings.effectiveWorkers(readable),
+            compressSync(ctx, in, readable, level, settings.effectiveWorkers(readable),
                     settings, promise);
         } else {
-            processor.add(ctx, new CompressWork(ctx, processor, in, readable, compressionLevel,
+            processor.add(ctx, new CompressWork(ctx, processor, in, readable, level,
                     settings.effectiveWorkers(readable), settings, promise));
         }
     }

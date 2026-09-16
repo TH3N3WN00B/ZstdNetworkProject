@@ -39,6 +39,7 @@ public final class ZstdSettings {
     private int hardwareAccelerationThreads;
     private int compressionThreshold = MIN_COMPRESSION_THRESHOLD;
     private boolean compressIfBeneficial = true;
+    private boolean matchServerLevel;
     private boolean debugOverlay;
     private List<String> disabledServers = List.of();
     private List<String> autoDisableMods = DEFAULT_AUTO_DISABLE_MODS;
@@ -110,6 +111,20 @@ public final class ZstdSettings {
 
     public void setCompressIfBeneficial(boolean compressIfBeneficial) {
         this.compressIfBeneficial = compressIfBeneficial;
+    }
+
+    /**
+     * When a server announces a higher zstd compression level than the client's configured one
+     * (Velocity in the login query, Paper in the play query), the client encodes its uploads at
+     * that higher level instead. Only ever raises the level, never lowers it, and has no effect in
+     * fast mode. Off by default.
+     */
+    public boolean isMatchServerLevel() {
+        return matchServerLevel;
+    }
+
+    public void setMatchServerLevel(boolean matchServerLevel) {
+        this.matchServerLevel = matchServerLevel;
     }
 
     /** Whether the client draws zstd statistics in the F3+3 bandwidth view (default off). */

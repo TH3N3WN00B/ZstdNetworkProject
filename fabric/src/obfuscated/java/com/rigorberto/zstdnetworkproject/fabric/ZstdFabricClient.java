@@ -7,6 +7,7 @@ import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdNegotiation;
 import com.rigorberto.zstdnetworkproject.ZstdOverlayStats;
+import com.rigorberto.zstdnetworkproject.ZstdPeerLevel;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
@@ -101,6 +102,9 @@ public class ZstdFabricClient implements ClientModInitializer {
         if (serverLevel >= 0) {
             ZstdOverlayStats.setServerCompressionLevel(serverLevel);
         }
+        if (settings.isMatchServerLevel() && serverLevel >= 0) {
+            adoptServerLevel(handler, serverLevel);
+        }
         return CompletableFuture.completedFuture(
                 new PacketByteBuf(Unpooled.wrappedBuffer(ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel()))));
     }
@@ -120,8 +124,24 @@ public class ZstdFabricClient implements ClientModInitializer {
         if (serverLevel >= 0) {
             ZstdOverlayStats.setServerCompressionLevel(serverLevel);
         }
+        if (settings.isMatchServerLevel() && serverLevel >= 0) {
+            adoptServerLevel(context.client().getNetworkHandler(), serverLevel);
+        }
         ClientPlayNetworking.send(new ZstdCapablePayload(
                 ZstdNegotiation.responsePayload(settings.effectiveCompressionLevel())));
+    }
+
+    /**
+     * With {@code match-server-level} on, records the level the server announced so the encoder can
+     * raise its own upload level to match (never lower). Failures here must never break the
+     * handshake, so the channel lookup is best-effort.
+     */
+    private static void adoptServerLevel(Object handler, int serverLevel) {
+        try {
+            Channel channel = ClientPipelineInjector.getChannel(ClientPipelineInjector.getConnection(handler));
+            ZstdPeerLevel.adopt(channel, serverLevel);
+        } catch (Exception ignored) {
+        }
     }
 
     /** True when the remote address matches the disabled-servers config: stay fully passive. */

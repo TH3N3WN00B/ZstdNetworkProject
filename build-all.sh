@@ -40,19 +40,32 @@ for version in "${versions[@]}"; do
 
   # Parse the group file into property args.
   gradle_args=()
+  neoforge_version=""
+  fabric_version=""
   paper_version=""
   while IFS= read -r line; do
     if [[ "$line" =~ ^[[:space:]]*([A-Za-z0-9_.-]+)[[:space:]]*=[[:space:]]*(.+)[[:space:]]*$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
       gradle_args+=("-P${key}=${val}")
-      if [ "$key" = "paper_version" ]; then
-        paper_version="$val"
-      fi
+      case "$key" in
+        neoforge_version) neoforge_version="$val" ;;
+        fabric_api_version) fabric_version="$val" ;;
+        paper_version) paper_version="$val" ;;
+      esac
     fi
   done < "$props"
 
-  tasks=(:neoforge:build :fabric:build)
+  # Each module is only built when the group defines its version (not NONE):
+  # a group like 26.3 that has paper but no fabric/neoforge release yet builds
+  # paper only, and settings.gradle leaves the other modules out of the build.
+  tasks=()
+  if [ -n "$neoforge_version" ] && [ "$neoforge_version" != "NONE" ]; then
+    tasks+=(:neoforge:build)
+  fi
+  if [ -n "$fabric_version" ] && [ "$fabric_version" != "NONE" ]; then
+    tasks+=(:fabric:build)
+  fi
   if [ -n "$paper_version" ] && [ "$paper_version" != "NONE" ]; then
     tasks+=(:paper:build)
   fi
@@ -68,7 +81,12 @@ for version in "${versions[@]}"; do
   fi
 
   for module in neoforge fabric paper; do
-    if [ "$module" = "paper" ] && { [ -z "$paper_version" ] || [ "$paper_version" = "NONE" ]; }; then
+    case "$module" in
+      neoforge) module_version="$neoforge_version" ;;
+      fabric) module_version="$fabric_version" ;;
+      paper) module_version="$paper_version" ;;
+    esac
+    if [ -z "$module_version" ] || [ "$module_version" = "NONE" ]; then
       continue
     fi
     find "$module/build/libs" -maxdepth 1 -name '*.jar' \

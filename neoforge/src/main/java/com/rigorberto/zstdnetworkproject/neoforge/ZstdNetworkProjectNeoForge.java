@@ -8,10 +8,13 @@ import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.StartupBanner;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
+import com.rigorberto.zstdnetworkproject.ZstdNegotiation;
+import com.rigorberto.zstdnetworkproject.ZstdPeerLevel;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
@@ -105,7 +108,7 @@ public class ZstdNetworkProjectNeoForge {
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar("1").optional();
         IPayloadHandler<ZstdCapablePayload> handler =
-                (payload, context) -> onCapabilityAnnounced(context);
+                (payload, context) -> onCapabilityAnnounced(payload, context, settings);
         try {
             Method twoHandlers = registrar.getClass().getMethod(
                     "playBidirectional",
@@ -128,12 +131,19 @@ public class ZstdNetworkProjectNeoForge {
      * {@code peerZstdRequired}, so a modded server and a modded client would each keep sending
      * vanilla zlib while waiting for the other to send zstd first.
      */
-    private static void onCapabilityAnnounced(IPayloadContext context) {
+    private static void onCapabilityAnnounced(ZstdCapablePayload payload, IPayloadContext context,
+                                              ZstdSettings settings) {
         try {
             Connection connection = context.connection();
             Object channelValue = ReflectionUtil.getFieldValue(connection, "channel");
             if (channelValue instanceof Channel channel) {
                 ZstdCapability.markZstdObserved(channel);
+                // This handler is registered for both directions. Only the client (receiving the
+                // server's probe, flow CLIENTBOUND) ever adopts the announced level; the server
+                // only records that its peer speaks zstd.
+                if (context.flow() == PacketFlow.CLIENTBOUND && settings.isMatchServerLevel()) {
+                    ZstdPeerLevel.adopt(channel, ZstdNegotiation.extractCompressionLevel(payload.data(), -1));
+                }
             }
         } catch (Exception e) {
             LOGGER.debug("Failed to mark peer as zstd-capable", e);

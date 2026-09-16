@@ -47,7 +47,13 @@ foreach ($version in $Versions) {
         $gradleArgs += "-P$key=$($propMap[$key])"
     }
 
-    $tasks = @(':neoforge:build', ':fabric:build')
+    $tasks = @()
+    if ($propMap.ContainsKey('neoforge_version') -and $propMap['neoforge_version'] -ne 'NONE') {
+        $tasks += ':neoforge:build'
+    }
+    if ($propMap.ContainsKey('fabric_api_version') -and $propMap['fabric_api_version'] -ne 'NONE') {
+        $tasks += ':fabric:build'
+    }
     if ($propMap.ContainsKey('paper_version') -and $propMap['paper_version'] -ne 'NONE') {
         $tasks += ':paper:build'
     }
@@ -65,12 +71,14 @@ foreach ($version in $Versions) {
     }
 
     foreach ($module in @('neoforge', 'fabric', 'paper')) {
-        # Skip paper when the group file has no paper_version at all, not only when it
-        # says NONE: otherwise stale paper jars from an earlier group get copied to dist.
-        if ($module -eq 'paper' -and
-            (-not $propMap.ContainsKey('paper_version') -or $propMap['paper_version'] -eq 'NONE')) {
-            continue
+        # Skip a module whose version the group does not define (or sets to NONE):
+        # otherwise stale jars from an earlier group get copied into dist.
+        $skip = switch ($module) {
+            'neoforge' { (-not $propMap.ContainsKey('neoforge_version') -or $propMap['neoforge_version'] -eq 'NONE') }
+            'fabric'   { (-not $propMap.ContainsKey('fabric_api_version') -or $propMap['fabric_api_version'] -eq 'NONE') }
+            'paper'    { (-not $propMap.ContainsKey('paper_version') -or $propMap['paper_version'] -eq 'NONE') }
         }
+        if ($skip) { continue }
         $libs = Join-Path $root "$module\build\libs"
         if (Test-Path $libs) {
             Get-ChildItem $libs -Filter '*.jar' -File |
