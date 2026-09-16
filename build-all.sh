@@ -11,6 +11,31 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# major version of the JVM that gradle will run on (JAVA_HOME first, PATH fallback)
+java_bin="java"
+if [ -n "${JAVA_HOME:-}" ]; then
+  java_bin="$JAVA_HOME/bin/java"
+fi
+java_major() {
+  local out
+  out="$("$java_bin" -version 2>&1 | head -n1)"
+  if [[ "$out" =~ \"1\.([0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$out" =~ \"([0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "0"
+  fi
+}
+
+# The whole build needs a Gradle daemon on Java 25+: fabric-loom 1.18.1, the moddev
+# plugin and Velocity 4.2 all require it, and the 26.x era targets 25. The obfuscated
+# group's Java-21 bytecode target is handled by the toolchain, never by the daemon.
+if [ "$(java_major)" -lt 25 ]; then
+  echo "ABORT: this build requires a Java 25+ JVM (JAVA_HOME currently resolves to Java $(java_major))." >&2
+  exit 1
+fi
+
 dist="$(pwd)/dist"
 mkdir -p "$dist"
 failed=()
@@ -39,7 +64,7 @@ for version in "${versions[@]}"; do
   fi
 
   # Parse the group file into property args.
-  gradle_args=()
+gradle_args=()
   neoforge_version=""
   fabric_version=""
   paper_version=""

@@ -123,11 +123,19 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         int headerLen = in.readerIndex() - frameStart;
         byte[] header = new byte[headerLen];
         in.getBytes(frameStart, header);
-        byte[] input = new byte[in.readableBytes()];
-        in.readBytes(input);
+        int payloadLen = in.readableBytes();
         if (processor.isIdle()) {
+            // Reuse the thread-local zlib staging buffer instead of allocating a fresh heap array
+            // per frame. inflateSync() decompresses into the separate SCRATCH thread-local, so the
+            // two buffers never alias.
+            byte[] input = ZstdCodecCtx.zlibInput(payloadLen);
+            in.readBytes(input);
             out.add(inflateOrPassThrough(ctx, header, input, uncompressedSize));
         } else {
+            // The queued work item runs on a worker thread later, while this event loop may start
+            // staging the next frame into the same thread-local, so it must own a private copy.
+            byte[] input = new byte[payloadLen];
+            in.readBytes(input);
             processor.add(ctx, new ZlibWork(this, ctx, header, input, uncompressedSize));
         }
     }
@@ -275,6 +283,18 @@ public class ZstdDecoder extends ByteToMessageDecoder {
     }
 
     private static ByteBuf inflateSync(ChannelHandlerContext ctx, byte[] input, int size) {
+        // Refuse wildly implausible ratios before allocating the decompression scratch and the
+        // direct output buffer: a peer that declares e.g. 8 MiB for a 100-byte zlib frame would
+        // otherwise commit that much memory per frame at almost no bandwidth cost. Only large
+        // declared sizes are guarded (a few-hundred-KiB frame that really inflates 10x is the
+        // normal behavior of highly compressible small payloads, not a DOS vector; vanilla bytes
+        // themselves are also capped at MAX_UNCOMPRESSED_SIZE).
+        if (size >= 1024 * 1024 && size > 10L * input.length) {
+            String detail = zlibFailureDetail(input, size, "declared size " + size + " is >10x the "
+                    + input.length + " compressed bytes at >= 1 MiB (implausible compression ratio)");
+            TraceDump.dump("client-decode", detail);
+            throw new IllegalStateException(detail);
+        }
         byte[] dst = ZstdCodecCtx.scratch(size);
         Inflater inflater = INFLATER_THREAD_LOCAL.get();
         int n;

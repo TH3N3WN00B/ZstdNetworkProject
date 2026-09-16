@@ -44,6 +44,7 @@ public final class ZstdSettings {
     private List<String> disabledServers = List.of();
     private List<String> autoDisableMods = DEFAULT_AUTO_DISABLE_MODS;
     private boolean hexDump;
+    private boolean useVirtualThreads = true;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -196,6 +197,19 @@ public final class ZstdSettings {
 
     public void setHexDump(boolean hexDump) {
         this.hexDump = hexDump;
+    }
+
+    /**
+     * Whether the shared codec worker pool uses virtual threads (Java 21+) instead of a fixed pool
+     * of platform threads. Off on runtimes older than Java 21, where the fixed pool is always used.
+     * Defaults to true.
+     */
+    public boolean isUseVirtualThreads() {
+        return useVirtualThreads;
+    }
+
+    public void setUseVirtualThreads(boolean useVirtualThreads) {
+        this.useVirtualThreads = useVirtualThreads;
     }
 
     /**

@@ -25,6 +25,7 @@ public final class ConfigLoader {
     public static final String KEY_AUTO_DISABLE_MODS = "auto-disable-mods";
     public static final String KEY_HEX_DUMP = "hex-dump";
     public static final String KEY_MATCH_SERVER_LEVEL = "match-server-level";
+    public static final String KEY_USE_VIRTUAL_THREADS = "use-virtual-threads";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
@@ -38,7 +39,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 9;
+    public static final int CONFIG_VERSION = 10;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -99,7 +100,13 @@ public final class ConfigLoader {
             "# (Velocity in the login query, Paper in the play query), compress uploads at\n" +
             "# that higher level. Only ever raises the level, never lowers it, and has no\n" +
             "# effect in fast mode. Client-side only. Disabled by default.\n" +
-            "match-server-level: false"
+            "match-server-level: false",
+            "# Use virtual threads for the async (de)compression pool on Java 21+.\n" +
+            "# A zstd JNI call blocks the current thread, and virtual threads do that\n" +
+            "# without pinning a platform thread, so the game/proxy threads are never\n" +
+            "# starved while large packets (de)compress. On Java < 21 a fixed pool of\n" +
+            "# platform threads is always used instead. Enabled by default.\n" +
+            "use-virtual-threads: true"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -155,6 +162,8 @@ public final class ConfigLoader {
                 : parseList(autoDisableMods));
         settings.setHexDump(parseBoolean(values.get(KEY_HEX_DUMP), false));
         settings.setMatchServerLevel(parseBoolean(values.get(KEY_MATCH_SERVER_LEVEL), false));
+        settings.setUseVirtualThreads(parseBoolean(values.get(KEY_USE_VIRTUAL_THREADS), true));
+        ZstdAsyncPools.setUseVirtualThreads(settings.isUseVirtualThreads());
         return settings;
     }
 

@@ -7,14 +7,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Shared daemon worker pool used to move large-packet (de)compression off the Netty event loops.
- * The pool is shared across all channels in the JVM and sized to a fraction of the available
- * cores so the game/proxy threads are not starved.
+ * The pool is shared across all channels in the JVM.
+ *
+ * <p>On Java 21+ the default is to use virtual threads ({@code Executors.newVirtualThreadPerTaskExecutor()}):
+ * a zstd JNI call blocks the current thread while the native library does the heavy lifting, and
+ * virtual threads do that without pinning a platform (carrier) thread, so the pool is effectively
+ * unbounded and the game/proxy threads are never starved. The opt-in {@code use-virtual-threads}
+ * config (or a pre-existing {@code -Dzstdnetworkproject.workers} system property on Java &lt; 21)
+ * falls back to a fixed pool of platform threads sized to a fraction of the available cores.
  *
  * <p>Both the pool size and the async threshold can be tuned for the runtime environment without a
  * rebuild, which is especially useful inside containers where {@code availableProcessors()} may
  * report the whole host instead of the container's CPU quota:
  * <ul>
- *   <li>pool size: {@code -Dzstdnetworkproject.workers=N} or env {@code ZSTDNETWORKPROJECT_WORKERS}</li>
+ *   <li>pool size: {@code -Dzstdnetworkproject.workers=N} or env {@code ZSTDNETWORKPROJECT_WORKERS}
+ *       (only used on the fixed-pool fallback)</li>
  *   <li>threshold: {@code -Dzstdnetworkproject.async-threshold=N} or env
  *       {@code ZSTDNETWORKPROJECT_ASYNC_THRESHOLD}</li>
  *   <li>per-channel queue limit: {@code -Dzstdnetworkproject.max-queued-bytes=N} or env
@@ -32,14 +39,24 @@ public final class ZstdAsyncPools {
             "zstdnetworkproject.async-threshold", "ZSTDNETWORKPROJECT_ASYNC_THRESHOLD", 64 * 1024, 256);
 
     private static final int WORKER_COUNT;
-    private static final ExecutorService EXECUTOR;
+    private static final ThreadFactory PLATFORM_FACTORY;
+
+    /**
+     * Whether the worker pool uses virtual threads (Java 21+) or a fixed platform-thread pool.
+     * Defaults to virtual threads when the runtime supports them; {@code ConfigLoader} flips it
+     * from the {@code use-virtual-threads} setting once the config is parsed.
+     */
+    private static volatile boolean virtualThreads = Runtime.version().feature() >= 21;
+
+    /** Created on first use, so the config-driven toggle has already been applied by then. */
+    private static volatile ExecutorService executor;
 
     static {
         int cores = Runtime.getRuntime().availableProcessors();
         int defaultWorkers = Math.max(2, Math.min(8, cores / 2));
         WORKER_COUNT = intValue("zstdnetworkproject.workers", "ZSTDNETWORKPROJECT_WORKERS", defaultWorkers, 1, 64);
         AtomicInteger counter = new AtomicInteger();
-        ThreadFactory factory = runnable -> {
+        PLATFORM_FACTORY = runnable -> {
             Thread thread = new Thread(runnable, "zstd-codec-worker-" + counter.incrementAndGet());
             thread.setDaemon(true);
             // Below-normal priority: Windows actually honors Java thread priorities (they map to
@@ -50,10 +67,14 @@ public final class ZstdAsyncPools {
             thread.setPriority(Thread.NORM_PRIORITY - 1);
             return thread;
         };
-        EXECUTOR = Executors.newFixedThreadPool(WORKER_COUNT, factory);
     }
 
     private ZstdAsyncPools() {
+    }
+
+    /** Overrides the pool strategy from the parsed {@code use-virtual-threads} config setting. */
+    static void setUseVirtualThreads(boolean enabled) {
+        virtualThreads = enabled;
     }
 
     public static int workerCount() {
@@ -61,7 +82,24 @@ public final class ZstdAsyncPools {
     }
 
     static ExecutorService executor() {
-        return EXECUTOR;
+        ExecutorService ex = executor;
+        if (ex == null) {
+            synchronized (ZstdAsyncPools.class) {
+                ex = executor;
+                if (ex == null) {
+                    ex = createExecutor();
+                    executor = ex;
+                }
+            }
+        }
+        return ex;
+    }
+
+    private static ExecutorService createExecutor() {
+        if (virtualThreads && Runtime.version().feature() >= 21) {
+            return Executors.newVirtualThreadPerTaskExecutor();
+        }
+        return Executors.newFixedThreadPool(WORKER_COUNT, PLATFORM_FACTORY);
     }
 
     private static int intValue(String sysProp, String env, int fallback, int min) {

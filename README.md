@@ -3,7 +3,7 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-0.2.5 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-0.2.6 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
@@ -38,8 +38,8 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 y 26.3. Para 26.3 Paper aún no publica builds estables (solo alpha/rc), y no existen builds de NeoForge/Fabric
 para esa versión, así que el grupo `26.3` compila únicamente los módulos paper y velocity.
 
-Artefactos: `zstd-neoforge-beta-0.2.5-mc<version>.jar`, `zstd-fabric-beta-0.2.5-mc<version>.jar`,
-`zstd-paper-beta-0.2.5-mc<version>.jar`, `zstd-velocity-beta-0.2.5.jar` (Velocity es independiente de la versión
+Artefactos: `zstd-neoforge-beta-0.2.6-mc<version>.jar`, `zstd-fabric-beta-0.2.6-mc<version>.jar`,
+`zstd-paper-beta-0.2.6-mc<version>.jar`, `zstd-velocity-beta-0.2.6.jar` (Velocity es independiente de la versión
 de MC). En `dist/` tras compilar.
 
 ## Instalación
@@ -78,6 +78,7 @@ El primer arranque genera `config.yml` comentado y auto-actualizable (las opcion
 | `auto-disable-mods` | *(vacío)* | Mods cuya presencia desactiva este mod automáticamente (ids exactos separados por comas). |
 | `hex-dump` | `false` | Volcado hex de todas las tramas a `zstd-hexdump.log` (solo diagnóstico). |
 | `match-server-level` | `false` | Si el servidor anuncia un nivel zstd mayor (Velocity en login, Paper en play), el cliente comprime sus subidas a ese nivel (solo sube, nunca baja; sin efecto en modo `fast`). Solo cliente. |
+| `use-virtual-threads` | `true` | Pool async de (des)compresión con virtual threads en Java 21+ (las llamadas JNI a zstd no bloquean un hilo de plataforma; en Java < 21 siempre se usa un pool fijo). |
 
 ## Rendimiento
 

@@ -6,7 +6,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.handler.codec.MessageToByteEncoder;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -267,129 +266,26 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         return out;
     }
 
-    private static final class RawWork implements OrderedAsyncProcessor.Work {
-        private final ChannelHandlerContext ctx;
-        private final ByteBuf msg;
-        private final int uncompressed;
-        private final ChannelPromise promise;
-
-        RawWork(ChannelHandlerContext ctx, ByteBuf msg, int uncompressed, ChannelPromise promise) {
-            this.ctx = ctx;
-            this.msg = msg;
-            this.uncompressed = uncompressed;
-            this.promise = promise;
+    private static final class RawWork extends AbstractRawWork {
+        RawWork(ChannelHandlerContext ctx, ByteBuf msg, int size, ChannelPromise promise) {
+            super(ctx, msg, size, promise);
         }
 
         @Override
-        public int queuedBytes() {
-            return uncompressed;
-        }
-
-        @Override
-        public boolean isAsync() {
-            return false;
-        }
-
-        @Override
-        public void processSync() {
-            writeRaw(ctx, msg, uncompressed, promise);
-        }
-
-        @Override
-        public void submitAsync() {
-        }
-
-        @Override
-        public void discard() {
-            msg.release();
-            promise.tryFailure(new ClosedChannelException());
+        protected void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int size, ChannelPromise promise) {
+            ZstdFrameEncoder.writeRaw(ctx, msg, size, promise);
         }
     }
 
-    private static final class CompressWork implements OrderedAsyncProcessor.Work {
-        private final ChannelHandlerContext ctx;
-        private final OrderedAsyncProcessor processor;
-        private final ByteBuf in;
-        private final int uncompressed;
-        private final int level;
-        private final int workers;
-        private final ZstdSettings settings;
-        private final ChannelPromise promise;
-
-        CompressWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in,
-                     int uncompressed, int level, int workers, ZstdSettings settings,
-                     ChannelPromise promise) {
-            this.ctx = ctx;
-            this.processor = processor;
-            this.in = in;
-            this.uncompressed = uncompressed;
-            this.level = level;
-            this.workers = workers;
-            this.settings = settings;
-            this.promise = promise;
+    private static final class CompressWork extends AbstractCompressWork {
+        CompressWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in, int size,
+                     int level, int workers, ZstdSettings settings, ChannelPromise promise) {
+            super(ctx, processor, in, size, level, workers, settings, promise);
         }
 
         @Override
-        public int queuedBytes() {
-            return uncompressed;
-        }
-
-        @Override
-        public boolean isAsync() {
-            return uncompressed >= ZstdAsyncPools.ASYNC_THRESHOLD;
-        }
-
-        @Override
-        public void processSync() {
-            compressSync(ctx, in, uncompressed, level, workers, settings, promise);
-        }
-
-        /**
-         * Hands the input to the worker thread, which compresses straight out of its memory. After
-         * {@code submitAsync} the event loop no longer touches {@code in} (the work owns it), so
-         * the worker has exclusive access and {@link #complete} releases the single reference it
-         * took ownership of.
-         */
-        @Override
-        public void submitAsync() {
-            ZstdAsyncPools.executor().execute(() -> {
-                ByteBuf out;
-                try {
-                    out = compressOnWorker();
-                } catch (Throwable t) {
-                    in.release();
-                    ctx.executor().execute(() -> {
-                        promise.tryFailure(t);
-                        processor.onAsyncComplete(ctx);
-                    });
-                    return;
-                }
-                ctx.executor().execute(() -> complete(out));
-            });
-        }
-
-        private ByteBuf compressOnWorker() {
-            return compressDirectOrCopy(ctx, in, uncompressed, level, workers, settings);
-        }
-
-        private void complete(ByteBuf out) {
-            try {
-                if (!ctx.channel().isActive()) {
-                    out.release();
-                    promise.tryFailure(new ClosedChannelException());
-                } else {
-                    ctx.writeAndFlush(out, promise);
-                }
-            } finally {
-                in.release();
-                processor.onAsyncComplete(ctx);
-            }
-        }
-
-        @Override
-        public void discard() {
-            in.release();
-            promise.tryFailure(new ClosedChannelException());
+        protected ByteBuf compressDirectOrCopy() {
+            return ZstdFrameEncoder.compressDirectOrCopy(ctx, in, size, level, workers, settings);
         }
     }
 }

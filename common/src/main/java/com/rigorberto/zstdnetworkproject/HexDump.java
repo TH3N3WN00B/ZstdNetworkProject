@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Opt-in full-frame hex dumps for protocol debugging: when {@code hex-dump: true} is set in the
@@ -33,9 +34,15 @@ public final class HexDump {
     /** Total bytes appended before dumping auto-disables itself. */
     private static final long MAX_TOTAL_BYTES = 32L * 1024 * 1024;
 
-    private static volatile Path file;
+    private static final AtomicReference<Path> FILE = new AtomicReference<>();
     private static volatile boolean enabled;
     private static final AtomicLong written = new AtomicLong();
+
+    /**
+     * Serves two purposes: it publishes the {@code file}/{@code enabled} pair atomically
+     * (only the thread that performs the CAS-configures writer and flag in step) and guards the
+     * lazily opened {@link #writer}, which may only be touched by one thread at a time.
+     */
     private static final Object LOCK = new Object();
 
     private HexDump() {
@@ -43,11 +50,12 @@ public final class HexDump {
 
     /** Configures the dump target once at startup; later calls are ignored so runtime code cannot redirect it. */
     public static void configure(Path logFile, boolean on) {
-        if (file != null || logFile == null) {
+        if (logFile == null) {
             return;
         }
-        file = logFile.toAbsolutePath();
-        enabled = on;
+        if (FILE.compareAndSet(null, logFile.toAbsolutePath())) {
+            enabled = on;
+        }
     }
 
     public static boolean isEnabled() {
@@ -147,7 +155,7 @@ public final class HexDump {
         if (writer != null) {
             return writer;
         }
-        Path path = file;
+        Path path = FILE.get();
         if (path == null) {
             return null;
         }

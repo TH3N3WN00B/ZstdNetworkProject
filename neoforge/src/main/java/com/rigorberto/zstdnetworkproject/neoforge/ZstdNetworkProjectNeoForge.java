@@ -36,6 +36,14 @@ import java.lang.reflect.Method;
 public class ZstdNetworkProjectNeoForge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("zstdnetworkproject");
+
+    /**
+     * Resolved once per JVM: the loader API that detects the distribution changed across eras
+     * ({@code FMLEnvironment.dist} field in 1.21.4 vs {@code FMLEnvironment.getDist()} in 26.2),
+     * so the lookup is done reflectively but never repeated.
+     */
+    private static final boolean IS_CLIENT_DIST = detectClientDist();
+
     private final ZstdSettings settings;
 
     public ZstdNetworkProjectNeoForge(IEventBus modEventBus) {
@@ -57,7 +65,7 @@ public class ZstdNetworkProjectNeoForge {
         HexDump.configure(FMLPaths.CONFIGDIR.get().resolve("zstdnetworkproject").resolve("zstd-hexdump.log"),
                 settings.isHexDump());
         StartupBanner.print();
-        if (isClientDist()) {
+        if (IS_CLIENT_DIST) {
             // ZstdNeoForgeClient subscribes itself to the event bus. Registering it here as well
             // would deliver every client event twice and, worse, would subscribe it even when its
             // constructor bailed out early.
@@ -65,11 +73,7 @@ public class ZstdNetworkProjectNeoForge {
         }
     }
 
-    /**
-     * Detects the distribution without linking to a loader API that changed across eras
-     * ({@code FMLEnvironment.dist} field in 1.21.4 vs {@code FMLEnvironment.getDist()} in 26.2).
-     */
-    private static boolean isClientDist() {
+    private static boolean detectClientDist() {
         try {
             Class<?> envClass = Class.forName("net.neoforged.fml.loading.FMLEnvironment");
             Object dist;

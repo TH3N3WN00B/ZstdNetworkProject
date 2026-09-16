@@ -60,28 +60,23 @@ public final class ZstdOverlayStats {
     }
 
     /**
-     * Baselines captured at {@link #resetConnection()}. The underlying counters are process-wide
-     * {@link LongAdder}s that never go backwards (a server has many connections sharing them), so
-     * per-connection figures are produced by subtracting the value they held when this connection
-     * started rather than by zeroing them.
+     * The counter values captured when the current connection started. All six fields are published
+     * in one volatile write, so a reader always sees a consistent snapshot instead of a mix of
+     * pre- and post-reset values.
      */
-    private static volatile long basePackets;
-    private static volatile long baseInputBytes;
-    private static volatile long baseOutputBytes;
-    private static volatile long baseZstdPackets;
-    private static volatile long baseZlibPackets;
-    private static volatile long baseRawPackets;
+    private record Baseline(long packets, long inputBytes, long outputBytes,
+                            long zstdPackets, long zlibPackets, long rawPackets) {
+    }
+
+    private static volatile Baseline baseline = new Baseline(0, 0, 0, 0, 0, 0);
 
     /** Called when a new login starts, so a server without zstd never shows stale state. */
     public static void resetConnection() {
         zstdObserved = false;
         serverCompressionLevel = -1;
-        basePackets = totalSentPackets();
-        baseInputBytes = totalSentUncompressedBytes();
-        baseOutputBytes = totalSentCompressedBytes();
-        baseZstdPackets = ZstdDecoder.ZSTD_PACKETS.sum();
-        baseZlibPackets = ZstdDecoder.ZLIB_PACKETS.sum();
-        baseRawPackets = ZstdDecoder.RAW_PACKETS.sum();
+        baseline = new Baseline(totalSentPackets(), totalSentUncompressedBytes(),
+                totalSentCompressedBytes(), ZstdDecoder.ZSTD_PACKETS.sum(),
+                ZstdDecoder.ZLIB_PACKETS.sum(), ZstdDecoder.RAW_PACKETS.sum());
     }
 
     // Both encoders are summed everywhere: proxies install ZstdFrameEncoder and never ZstdEncoder,
@@ -99,27 +94,33 @@ public final class ZstdOverlayStats {
     }
 
     public static long sentPackets() {
-        return totalSentPackets() - basePackets;
+        Baseline b = baseline;
+        return totalSentPackets() - b.packets;
     }
 
     public static long sentUncompressedBytes() {
-        return totalSentUncompressedBytes() - baseInputBytes;
+        Baseline b = baseline;
+        return totalSentUncompressedBytes() - b.inputBytes;
     }
 
     public static long sentCompressedBytes() {
-        return totalSentCompressedBytes() - baseOutputBytes;
+        Baseline b = baseline;
+        return totalSentCompressedBytes() - b.outputBytes;
     }
 
     public static long receivedZstdPackets() {
-        return ZstdDecoder.ZSTD_PACKETS.sum() - baseZstdPackets;
+        Baseline b = baseline;
+        return ZstdDecoder.ZSTD_PACKETS.sum() - b.zstdPackets;
     }
 
     public static long receivedZlibPackets() {
-        return ZstdDecoder.ZLIB_PACKETS.sum() - baseZlibPackets;
+        Baseline b = baseline;
+        return ZstdDecoder.ZLIB_PACKETS.sum() - b.zlibPackets;
     }
 
     public static long receivedRawPackets() {
-        return ZstdDecoder.RAW_PACKETS.sum() - baseRawPackets;
+        Baseline b = baseline;
+        return ZstdDecoder.RAW_PACKETS.sum() - b.rawPackets;
     }
 
     public static long receivedTotalPackets() {

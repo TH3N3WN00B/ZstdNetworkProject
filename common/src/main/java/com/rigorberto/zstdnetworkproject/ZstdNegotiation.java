@@ -30,10 +30,6 @@ public final class ZstdNegotiation {
         return new byte[]{PROTOCOL_VERSION, (byte) compressionLevel};
     }
 
-    public static byte[] queryPayload() {
-        return queryPayload(3);
-    }
-
     /**
      * The payload the client sends in response.
      * Byte 0 is the protocol version, byte 1 is the client compression level.

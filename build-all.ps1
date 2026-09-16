@@ -19,6 +19,35 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 Remove-Item (Join-Path $dist '*.jar') -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $root -Filter 'build-*.log' -File | Remove-Item -Force -ErrorAction SilentlyContinue
 
+# Parses the major version of the JVM that gradle will run on (JAVA_HOME first, PATH fallback).
+function Get-JavaMajor {
+    $javaExe = if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe'))) {
+        Join-Path $env:JAVA_HOME 'bin\java.exe'
+    } else {
+        'java'
+    }
+    try {
+        $line = (& $javaExe -version 2>&1 | Select-Object -First 3) -join ' '
+    } catch {
+        return 0
+    }
+    if ($line -match '"(\d+)(?:\.(\d+))?') {
+        $first = [int]$matches[1]
+        if ($first -eq 1) { [int]$matches[2] } else { $first }
+    } else {
+        0
+    }
+}
+
+# The whole build needs a Gradle daemon on Java 25+: fabric-loom 1.18.1, the moddev
+# plugin and Velocity 4.2 all require it, and the 26.x era targets 25. The obfuscated
+# group's Java-21 bytecode target is handled by the toolchain, never by the daemon.
+$daemonJava = Get-JavaMajor
+if ($daemonJava -lt 25) {
+    Write-Host "ABORT: this build requires a Java 25+ JVM (JAVA_HOME currently resolves to Java $daemonJava)." -ForegroundColor Red
+    exit 1
+}
+
 if ($Versions.Count -eq 0) {
     $Versions = Get-ChildItem -Path $root -Filter 'gradle-mc*.properties' -File |
         ForEach-Object { $_.BaseName -replace '^gradle-mc', '' } | Sort-Object

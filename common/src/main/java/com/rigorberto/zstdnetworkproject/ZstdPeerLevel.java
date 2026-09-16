@@ -46,14 +46,7 @@ public final class ZstdPeerLevel {
         if (channel == null || serverLevel < 1 || serverLevel > ConfigLoader.MAX_COMPRESSION_LEVEL) {
             return;
         }
-        AtomicInteger ref = channel.attr(PEER_LEVEL).get();
-        if (ref == null) {
-            ref = new AtomicInteger();
-            AtomicInteger existing = channel.attr(PEER_LEVEL).setIfAbsent(ref);
-            if (existing != null) {
-                ref = existing;
-            }
-        }
-        ref.updateAndGet(current -> Math.max(current, serverLevel));
+        ChannelAttrs.getOrCreate(channel, PEER_LEVEL, AtomicInteger::new)
+                .updateAndGet(current -> Math.max(current, serverLevel));
     }
 }

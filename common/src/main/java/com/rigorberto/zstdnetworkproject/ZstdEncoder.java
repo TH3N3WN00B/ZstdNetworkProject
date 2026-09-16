@@ -98,12 +98,7 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             return;
         }
 
-        // The configured level is resolved once per write when match-server-level is on, because
-        // the server's level arrives mid-handshake (login/play query), after the encoder is created.
-        int level = compressionLevel;
-        if (settings.isMatchServerLevel()) {
-            level = ZstdPeerLevel.effectiveLevel(ctx.channel(), level);
-        }
+        int level = resolveLevel(ctx);
 
         if (processor.isIdle() && readable < ZstdAsyncPools.ASYNC_THRESHOLD) {
             compressSync(ctx, in, readable, level, settings.effectiveWorkers(readable),
@@ -117,6 +112,20 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     @Override
     protected void encode(ChannelHandlerContext ctx, ByteBuf msg, ByteBuf out) {
         throw new UnsupportedOperationException("encode is not used; write() is overridden");
+    }
+
+    /**
+     * Resolves the compression level for one write. The peer's announced level arrives
+     * mid-handshake (login/play query), after this encoder was created, so when the opt-in
+     * {@code match-server-level} setting is on the level is read per write; otherwise the configured
+     * level is used directly.
+     */
+    private int resolveLevel(ChannelHandlerContext ctx) {
+        int level = compressionLevel;
+        if (settings.isMatchServerLevel()) {
+            level = ZstdPeerLevel.effectiveLevel(ctx.channel(), level);
+        }
+        return level;
     }
 
     @Override
@@ -203,22 +212,20 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             int varIntLen = varIntLength(readable);
             out = ctx.alloc().directBuffer(varIntLen + ZstdCodecCtx.deflateBound(readable));
             writeVarInt(out, readable);
-            // deflate() fills at most dst.length bytes per call and gives no direct signal that it
-            // had more to write, so the loop must run until finished(): taking a single call's
-            // result would silently truncate the stream (and produce a frame whose size prefix no
-            // longer matches its payload) whenever deflateBound under-estimates.
-            byte[] dst = ZstdCodecCtx.scratch(8192);
-            while (!deflater.finished()) {
-                int size = deflater.deflate(dst);
-                if (size <= 0) {
-                    if (deflater.finished()) {
-                        break;
-                    }
-                    throw new IllegalStateException("zlib compression stalled: deflate() produced "
-                            + size + " bytes and is not finished (declaredSize=" + readable + ")");
-                }
-                out.writeBytes(dst, 0, size);
+            // deflateBound is a guaranteed upper bound on the output, so with a scratch buffer of
+            // that size a single deflate() call produces the whole stream; finished() confirms it.
+            // The old loop was only needed because the scratch was fixed-size.
+            byte[] dst = ZstdCodecCtx.scratch(ZstdCodecCtx.deflateBound(readable));
+            int size = deflater.deflate(dst);
+            if (!deflater.finished()) {
+                throw new IllegalStateException("zlib compression bound unexpectedly insufficient for "
+                        + readable + " input bytes");
             }
+            if (size <= 0) {
+                throw new IllegalStateException("zlib compression stalled: deflate() produced "
+                        + size + " bytes and is not generating output (declaredSize=" + readable + ")");
+            }
+            out.writeBytes(dst, 0, size);
             if (out.readableBytes() <= varIntLen) {
                 throw new IllegalStateException("zlib compression produced an empty stream for "
                         + readable + " input bytes");
@@ -303,46 +310,24 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         }
     }
 
-    private static final class RawWork implements OrderedAsyncProcessor.Work {
-        private final ChannelHandlerContext ctx;
-        private final ByteBuf msg;
-        private final int readable;
-        private final ChannelPromise promise;
-
-        RawWork(ChannelHandlerContext ctx, ByteBuf msg, int readable, ChannelPromise promise) {
-            this.ctx = ctx;
-            this.msg = msg;
-            this.readable = readable;
-            this.promise = promise;
+    private static final class RawWork extends AbstractRawWork {
+        RawWork(ChannelHandlerContext ctx, ByteBuf msg, int size, ChannelPromise promise) {
+            super(ctx, msg, size, promise);
         }
 
         @Override
-        public int queuedBytes() {
-            return readable;
-        }
-
-        @Override
-        public boolean isAsync() {
-            return false;
-        }
-
-        @Override
-        public void processSync() {
-            writeRaw(ctx, msg, readable, promise);
-        }
-
-        @Override
-        public void submitAsync() {
-        }
-
-        @Override
-        public void discard() {
-            msg.release();
-            promise.tryFailure(new ClosedChannelException());
+        protected void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int size, ChannelPromise promise) {
+            ZstdEncoder.writeRaw(ctx, msg, size, promise);
         }
     }
 
-    private static final class ZlibWork implements OrderedAsyncProcessor.Work {
+    /**
+     * A zlib fallback packet that waited in the FIFO behind an asynchronous packet. When it is
+     * finally processed the peer may have proven it speaks zstd in the meantime; re-checking here
+     * (instead of trusting the check done at {@code write()} time) guarantees no vanilla-zlib frame
+     * is sent after the zstd handshake completed.
+     */
+    private final class ZlibWork implements OrderedAsyncProcessor.Work {
         private final ChannelHandlerContext ctx;
         private final ByteBuf in;
         private final int readable;
@@ -367,7 +352,12 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
 
         @Override
         public void processSync() {
-            writeZlib(ctx, in, readable, promise);
+            if (ZstdCapability.remoteSpeaksZstd(ctx.channel())) {
+                compressSync(ctx, in, readable, resolveLevel(ctx),
+                        settings.effectiveWorkers(readable), settings, promise);
+            } else {
+                writeZlib(ctx, in, readable, promise);
+            }
         }
 
         @Override
@@ -381,89 +371,15 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         }
     }
 
-    private static final class CompressWork implements OrderedAsyncProcessor.Work {
-        private final ChannelHandlerContext ctx;
-        private final OrderedAsyncProcessor processor;
-        private final ByteBuf in;
-        private final int readable;
-        private final int level;
-        private final int workers;
-        private final ZstdSettings settings;
-        private final ChannelPromise promise;
-
-        CompressWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in,
-                     int readable, int level, int workers, ZstdSettings settings, ChannelPromise promise) {
-            this.ctx = ctx;
-            this.processor = processor;
-            this.in = in;
-            this.readable = readable;
-            this.level = level;
-            this.workers = workers;
-            this.settings = settings;
-            this.promise = promise;
+    private static final class CompressWork extends AbstractCompressWork {
+        CompressWork(ChannelHandlerContext ctx, OrderedAsyncProcessor processor, ByteBuf in, int size,
+                     int level, int workers, ZstdSettings settings, ChannelPromise promise) {
+            super(ctx, processor, in, size, level, workers, settings, promise);
         }
 
         @Override
-        public int queuedBytes() {
-            return readable;
-        }
-
-        @Override
-        public boolean isAsync() {
-            return readable >= ZstdAsyncPools.ASYNC_THRESHOLD;
-        }
-
-        @Override
-        public void processSync() {
-            compressSync(ctx, in, readable, level, workers, settings, promise);
-        }
-
-        /**
-         * Hands the input to the worker thread, which compresses straight out of its memory. After
-         * {@code submitAsync} the event loop no longer touches {@code in} (the work owns it), so
-         * the worker has exclusive access and {@link #complete} releases the single reference it
-         * took ownership of.
-         */
-        @Override
-        public void submitAsync() {
-            ZstdAsyncPools.executor().execute(() -> {
-                ByteBuf out;
-                try {
-                    out = compressOnWorker();
-                } catch (Throwable t) {
-                    in.release();
-                    ctx.executor().execute(() -> {
-                        promise.tryFailure(t);
-                        processor.onAsyncComplete(ctx);
-                    });
-                    return;
-                }
-                ctx.executor().execute(() -> complete(out));
-            });
-        }
-
-        private ByteBuf compressOnWorker() {
-            return compressDirectOrCopy(ctx, in, readable, level, workers, settings);
-        }
-
-        private void complete(ByteBuf out) {
-            try {
-                if (!ctx.channel().isActive()) {
-                    out.release();
-                    promise.tryFailure(new ClosedChannelException());
-                } else {
-                    ctx.writeAndFlush(out, promise);
-                }
-            } finally {
-                in.release();
-                processor.onAsyncComplete(ctx);
-            }
-        }
-
-        @Override
-        public void discard() {
-            in.release();
-            promise.tryFailure(new ClosedChannelException());
+        protected ByteBuf compressDirectOrCopy() {
+            return ZstdEncoder.compressDirectOrCopy(ctx, in, size, level, workers, settings);
         }
     }
 }

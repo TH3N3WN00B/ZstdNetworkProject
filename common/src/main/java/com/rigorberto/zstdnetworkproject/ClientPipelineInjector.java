@@ -1,9 +1,16 @@
 package com.rigorberto.zstdnetworkproject;
 
 import io.netty.channel.Channel;
+import java.lang.reflect.Method;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public final class ClientPipelineInjector {
+
+    /** Cached per-class {@code getConnection()} method; resolved once on the first join. */
+    private static final ConcurrentHashMap<Class<?>, Optional<Method>> GET_CONNECTION_CACHE =
+            new ConcurrentHashMap<>();
 
     @FunctionalInterface
     public interface Injector {
@@ -91,17 +98,37 @@ public final class ClientPipelineInjector {
 
     /**
      * Resolves the underlying connection from a client packet listener, preferring the public
-     * {@code getConnection()} method and falling back to the {@code connection} field.
+     * {@code getConnection()} method (cached per listener class, so the reflective lookup happens
+     * once per connection type instead of on every join) and falling back to the {@code connection}
+     * field.
      */
     public static Object getConnection(Object packetListener) throws Exception {
-        try {
-            Object value = packetListener.getClass().getMethod("getConnection").invoke(packetListener);
+        Method method = getConnectionMethod(packetListener.getClass());
+        if (method != null) {
+            Object value = method.invoke(packetListener);
             if (value != null) {
                 return value;
             }
-        } catch (NoSuchMethodException ignored) {
         }
         return ReflectionUtil.getFieldValue(packetListener, "connection");
+    }
+
+    private static Method getConnectionMethod(Class<?> type) {
+        Optional<Method> cached = GET_CONNECTION_CACHE.get(type);
+        if (cached == null) {
+            Method method;
+            try {
+                method = type.getMethod("getConnection");
+            } catch (NoSuchMethodException e) {
+                method = null;
+            }
+            cached = Optional.ofNullable(method);
+            Optional<Method> raced = GET_CONNECTION_CACHE.putIfAbsent(type, cached);
+            if (raced != null) {
+                cached = raced;
+            }
+        }
+        return cached.orElse(null);
     }
 
     /**

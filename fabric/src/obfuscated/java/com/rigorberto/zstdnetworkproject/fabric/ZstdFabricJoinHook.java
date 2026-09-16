@@ -1,10 +1,12 @@
 package com.rigorberto.zstdnetworkproject.fabric;
 
+import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
+import io.netty.channel.Channel;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -50,7 +52,13 @@ public final class ZstdFabricJoinHook {
             return; // No native library here: we could not produce zstd frames anyway.
         }
         try {
-            ZstdCapability.markZstdObserved(context.player().networkHandler.connection.channel);
+            Object connection = ClientPipelineInjector.getConnection(context.player().networkHandler);
+            if (connection != null) {
+                Channel channel = ClientPipelineInjector.getChannel(connection);
+                if (channel != null) {
+                    ZstdCapability.markZstdObserved(channel);
+                }
+            }
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to mark client as zstd-capable", e);
         }
@@ -61,8 +69,10 @@ public final class ZstdFabricJoinHook {
             return; // Never install handlers we cannot actually run; peers stay on vanilla zlib.
         }
         try {
-            // ServerPlayNetworkHandler.connection (inherited from ServerCommonNetworkHandler) -> ClientConnection.channel
-            PipelineInjector.injectClient(handler.connection.channel, settings);
+            Channel channel = ClientPipelineInjector.getChannel(ClientPipelineInjector.getConnection(handler));
+            if (channel != null) {
+                PipelineInjector.injectClient(channel, settings);
+            }
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to inject Zstd handlers", e);
             ErrorLogger.log(FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject").resolve("zstd-errors.log"),

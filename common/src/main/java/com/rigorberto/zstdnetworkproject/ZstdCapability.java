@@ -32,15 +32,7 @@ public final class ZstdCapability {
         if (channel == null) {
             return;
         }
-        AtomicBoolean flag = channel.attr(REMOTE_SPEAKS_ZSTD).get();
-        if (flag == null) {
-            flag = new AtomicBoolean();
-            AtomicBoolean existing = channel.attr(REMOTE_SPEAKS_ZSTD).setIfAbsent(flag);
-            if (existing != null) {
-                flag = existing;
-            }
-        }
-        flag.set(true);
+        ChannelAttrs.getOrCreate(channel, REMOTE_SPEAKS_ZSTD, AtomicBoolean::new).set(true);
         ZstdOverlayStats.noteZstdObserved();
     }
 }

@@ -1,8 +1,8 @@
 package com.rigorberto.zstdnetworkproject.fabric;
 
+import com.rigorberto.zstdnetworkproject.ClientPipelineInjector;
 import com.rigorberto.zstdnetworkproject.ErrorLogger;
 import com.rigorberto.zstdnetworkproject.PipelineInjector;
-import com.rigorberto.zstdnetworkproject.ReflectionUtil;
 import com.rigorberto.zstdnetworkproject.ZstdCapability;
 import com.rigorberto.zstdnetworkproject.ZstdNative;
 import com.rigorberto.zstdnetworkproject.ZstdSettings;
@@ -52,9 +52,12 @@ public final class ZstdFabricJoinHook {
             return; // No native library here: we could not produce zstd frames anyway.
         }
         try {
-            Channel channel = channelOf(context.player().connection);
-            if (channel != null) {
-                ZstdCapability.markZstdObserved(channel);
+            Object connection = ClientPipelineInjector.getConnection(context.player().connection);
+            if (connection != null) {
+                Channel channel = ClientPipelineInjector.getChannel(connection);
+                if (channel != null) {
+                    ZstdCapability.markZstdObserved(channel);
+                }
             }
         } catch (Exception e) {
             ZstdNetworkProjectFabric.LOGGER.debug("Failed to mark client as zstd-capable", e);
@@ -66,7 +69,7 @@ public final class ZstdFabricJoinHook {
             return; // Never install handlers we cannot actually run; peers stay on vanilla zlib.
         }
         try {
-            Channel channel = channelOf(handler);
+            Channel channel = ClientPipelineInjector.getChannel(ClientPipelineInjector.getConnection(handler));
             if (channel != null) {
                 PipelineInjector.injectClient(channel, settings);
             }
@@ -75,15 +78,5 @@ public final class ZstdFabricJoinHook {
             ErrorLogger.log(FabricLoader.getInstance().getConfigDir().resolve("zstdnetworkproject").resolve("zstd-errors.log"),
                     "Failed to inject Zstd handlers", e);
         }
-    }
-
-    /** ServerGamePacketListenerImpl.connection (from ServerCommonPacketListenerImpl) -> Connection.channel. */
-    private static Channel channelOf(Object packetListener) throws Exception {
-        Object connection = ReflectionUtil.getFieldValue(packetListener, "connection");
-        if (connection == null) {
-            return null;
-        }
-        Object channelValue = ReflectionUtil.getFieldValue(connection, "channel");
-        return channelValue instanceof Channel channel ? channel : null;
     }
 }

@@ -40,8 +40,9 @@ final class ZstdCodecCtx {
             ThreadLocal.withInitial(CompressHolder::new);
     private static final ThreadLocal<ZstdDecompressCtx> DECOMPRESS =
             ThreadLocal.withInitial(ZstdDecompressCtx::new);
-    private static final ThreadLocal<byte[]> SCRATCH =
-            ThreadLocal.withInitial(() -> new byte[16 * 1024]);
+
+    /** Initial (and minimum reusable) size of the cached scratch and zlib staging buffers. */
+    private static final int MIN_BLOCK = 16 * 1024;
 
     /**
      * Cached scratch buffers stop growing beyond this size: larger requests get a transient array
@@ -50,6 +51,14 @@ final class ZstdCodecCtx {
      * that touched it for the rest of its life, which is easy memory pressure in small containers.
      */
     private static final int MAX_CACHED_SCRATCH = 4 * 1024 * 1024;
+
+    private static final ThreadLocal<byte[]> SCRATCH =
+            ThreadLocal.withInitial(() -> new byte[MIN_BLOCK]);
+
+    /** Separate staging buffer for the zlib decoder input, so it can never alias {@link #SCRATCH}. */
+    private static final ThreadLocal<byte[]> ZLIB_INPUT =
+            ThreadLocal.withInitial(() -> new byte[MIN_BLOCK]);
+
     private static final ThreadLocal<Deflater> DEFLATER =
             ThreadLocal.withInitial(Deflater::new);
 
@@ -69,8 +78,28 @@ final class ZstdCodecCtx {
     }
 
     static byte[] scratch(int needed) {
-        byte[] buf = SCRATCH.get();
+        return cachedBuffer(SCRATCH, needed);
+    }
+
+    static byte[] zlibInput(int needed) {
+        return cachedBuffer(ZLIB_INPUT, needed);
+    }
+
+    /**
+     * Returns a thread-local byte array of at least {@code needed} bytes. Cached buffers grow to
+     * the largest size the thread has requested (capped at {@link #MAX_CACHED_SCRATCH}); once the
+     * workload shrinks, a buffer at least {@code 2x} the current need is halved back to it so a
+     * one-time huge frame (e.g. a chunk download) does not pin a big array forever.
+     */
+    private static byte[] cachedBuffer(ThreadLocal<byte[]> cache, int needed) {
+        byte[] buf = cache.get();
         if (buf.length >= needed) {
+            int target = Math.max(MIN_BLOCK, needed);
+            if (buf.length >= target * 2L && needed < MAX_CACHED_SCRATCH) {
+                byte[] shrunk = new byte[target];
+                cache.set(shrunk);
+                return shrunk;
+            }
             return buf;
         }
         if (needed > MAX_CACHED_SCRATCH) {
@@ -78,9 +107,9 @@ final class ZstdCodecCtx {
             // retained forever in the thread-local.
             return new byte[needed];
         }
-        buf = new byte[needed];
-        SCRATCH.set(buf);
-        return buf;
+        byte[] grown = new byte[needed];
+        cache.set(grown);
+        return grown;
     }
 
     /**
