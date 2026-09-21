@@ -1,9 +1,47 @@
-def mcVersion = providers.gradleProperty('minecraft_version').getOrElse('1.21.11')
-def era = mcVersion.startsWith('26.') ? 'unobfuscated' : 'obfuscated'
-
+// Enforce Netty 4.2.18 for protocol compatibility (all modules)
 ext {
-    minecraftEra = era
-    javaVersion = era == 'unobfuscated' ? 25 : 21
+    nettyVersion = '4.2.18'
+    velocityVersion = '4.2.0' // Stable, requires JVM 25+, targets Java 21 bytecode
+}
+
+// Force Gradle to use JVM 27 for everything (dependency resolution + compilation)
+gradle.projectsEvaluated {
+    tasks.withType(JavaCompile).configureEach {
+        javaCompiler = javaToolchains.compilerFor {
+            languageVersion = JavaLanguageVersion.of(27)
+        }
+        options.encoding = "UTF-8"
+        options.release = (project.findProperty("${project.name}_java_version") ?: 21).toString()
+    }
+    
+    tasks.withType(Test).configureEach {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(27)
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { name = 'papermc'; url = 'https://repo.papermc.io/repository/maven-public/' }
+    maven { name = 'velocity'; url = 'https://maven.fabricmc.net/' }
+}
+
+// Force Gradle to use JVM 27 for everything
+gradle.projectsEvaluated {
+    tasks.withType(JavaCompile).configureEach {
+        javaCompiler = javaToolchains.compilerFor {
+            languageVersion = JavaLanguageVersion.of(27)
+        }
+        options.encoding = "UTF-8"
+        options.release = (project.findProperty("${project.name}_java_version") ?: 21).toString()
+    }
+    
+    tasks.withType(Test).configureEach {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(27)
+        }
+    }
 }
 
 subprojects {
@@ -11,31 +49,47 @@ subprojects {
     apply plugin: 'maven-publish'
 
     group = rootProject.maven_group
-    version = rootProject.mod_version
+    version = "${rootProject.mod_version}-mc${rootProject.minecraft_version}"
 
     base {
         archivesName = "zstd-${project.name}"
     }
 
-    tasks.withType(Jar).configureEach {
-        // Version-agnostic modules (velocity) keep the plain label; MC-targeted
-        // modules get the Minecraft version embedded so multiple version builds
-        // can coexist, e.g. zstd-neoforge-beta-0.2-mc26.2.jar.
-        def mcSuffix = project.name == 'velocity' ? '' : "-mc${project.minecraft_version}"
-        archiveVersion = "${rootProject.mod_version}${mcSuffix}"
-    }
-
-    def projectJavaVersion = (project.findProperty("${project.name}_java_version") ?: rootProject.javaVersion).toInteger()
+    def projectJavaVersion = (project.findProperty("${project.name}_java_version") ?: "21").toString().toInteger()
 
     java {
-        toolchain {
-            languageVersion = JavaLanguageVersion.of(projectJavaVersion)
-        }
-        withSourcesJar()
+        sourceCompatibility = JavaVersion.toVersion(projectJavaVersion)
+        targetCompatibility = JavaVersion.toVersion(projectJavaVersion)
     }
 
     tasks.withType(JavaCompile).configureEach {
         options.encoding = "UTF-8"
-        options.release.set(projectJavaVersion)
+        options.release = projectJavaVersion
     }
+
+    // Velocity API 4.2.1-SNAPSHOT for protocol compatibility (Minecraft 26.x, Java 25+)
+    // Only applies to projects that need Velocity (velocity module)
+    if (project.name == 'velocity') {
+        dependencies {
+            implementation "com.velocitypowered:velocity-api:${rootProject.ext.velocityVersion}"
+            testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+        }
+    }
+}
+
+// Copy all JARs to dist directory
+tasks.register('copyToDist', Copy) {
+    from rootProject.layout.buildDirectory.dir('libs')
+    into rootProject.file('dist')
+    include '*.jar'
+}
+
+tasks.register('copyPluginJars', Copy) {
+    from rootProject.layout.buildDirectory.dir('classes')
+    into rootProject.file('dist')
+}
+
+tasks.register('buildAll', DefaultTask) {
+    dependsOn rootProject.tasks.named('build')
+    dependsOn tasks.named('copyToDist')
 }

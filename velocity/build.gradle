@@ -6,6 +6,7 @@ plugins {
 repositories {
     mavenCentral()
     maven { url = "https://repo.papermc.io/repository/maven-public/" }
+    maven { name = 'velocity'; url = 'https://maven.fabricmc.net/' }
 }
 
 configurations.all {
@@ -22,7 +23,7 @@ configurations.all {
 dependencies {
     implementation project(':common')
     implementation "com.github.luben:zstd-jni:${project.zstd_version}"
-    compileOnly "io.netty:netty-all:${project.netty_version}"
+    compileOnly "io.netty:netty-all:4.2.18.Final"
     compileOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
     runtimeOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
 }

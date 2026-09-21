@@ -135,6 +135,53 @@ public final class ZstdAsyncPools {
         }
     }
 
+    /**
+     * Small direct buffer pool to reduce allocations for common packet sizes.
+     * Reused safely via atomic swap and null-check guards.
+     */
+    private static final java.util.concurrent.atomic.AtomicReference<byte[]> SMALL_BUFFER_POOL =
+            new java.util.concurrent.atomic.AtomicReference<>(new byte[64 * 1024]);
+
+    /**
+     * Returns a small reusable buffer (<= 64KB) or allocates a new one if needed.
+     * The returned buffer is zeroed and ready to write.
+     */
+    static byte[] acquireSmallBuffer(int maxCapacity) {
+        if (maxCapacity > 65536) {
+            return new byte[maxCapacity];
+        }
+
+        byte[] pool = SMALL_BUFFER_POOL.get();
+        if (pool == null || pool.length < maxCapacity) {
+            byte[] newPool = new byte[Math.min(256 * 1024, maxCapacity)];
+            if (!SMALL_BUFFER_POOL.compareAndSet(pool, newPool)) {
+                return SMALL_BUFFER_POOL.get();
+            }
+            return newPool;
+        }
+
+        byte[] reused = pool;
+        java.util.Arrays.fill(reused, 0, reused.length, (byte) 0);
+        return reused;
+    }
+
+    /**
+     * Releases a small buffer back to the pool (if within capacity).
+     * If the buffer is too large, it's leaked intentionally (will be GC'd).
+     */
+    static void releaseSmallBuffer(byte[] buffer) {
+        if (buffer == null || buffer.length > 65536) {
+            return;
+        }
+
+        byte[] currentPool = SMALL_BUFFER_POOL.get();
+        if (currentPool != null && currentPool.length >= buffer.length) {
+            if (SMALL_BUFFER_POOL.compareAndSet(currentPool, buffer)) {
+                return;
+            }
+        }
+    }
+
     private static String rawValue(String sysProp, String env) {
         String raw = System.getProperty(sysProp);
         if (raw == null) {

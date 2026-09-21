@@ -105,6 +105,24 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         return ZstdEncoder.varIntLength(value);
     }
 
+    /** Writes {@code value} as a VarInt at the current writer index of {@code buf}. */
+    private static void writeVarInt(ByteBuf buf, int value) {
+        while ((value & ~0x7F) != 0) {
+            buf.writeByte((value & 0x7F) | 0x80);
+            value >>>= 7;
+        }
+        buf.writeByte(value);
+    }
+
+    /** Writes {@code value} as a VarInt at {@code index} without moving {@code buf}'s indices. */
+    private static void writeVarIntAt(ByteBuf buf, int index, int value) {
+        while ((value & ~0x7F) != 0) {
+            buf.setByte(index++, (value & 0x7F) | 0x80);
+            value >>>= 7;
+        }
+        buf.setByte(index, value);
+    }
+
     /**
      * Whether the compressed frame (length varint + uncompressed-size varint + compressed payload)
      * is smaller than the raw frame ({@code length+1, 0x00, payload}).
@@ -120,7 +138,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     private static void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int uncompressed, ChannelPromise promise) {
         int sizeVarIntLength = varIntLength(uncompressed + 1);
         ByteBuf out = ctx.alloc().directBuffer(sizeVarIntLength + 1 + uncompressed);
-        ZstdEncoder.writeVarInt(out, uncompressed + 1);
+        writeVarInt(out, uncompressed + 1);
         out.writeByte(0);
         out.writeBytes(msg);
         OUTPUT_BYTES.add(out.readableBytes());
@@ -211,8 +229,8 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         int frameLengthVarIntLength = varIntLength(frameLength);
         int frameStart = FRAME_LENGTH_SLOT - frameLengthVarIntLength;
         out.writerIndex(FRAME_LENGTH_SLOT + sizeVarIntLength + size);
-        ZstdEncoder.writeVarIntAt(out, FRAME_LENGTH_SLOT, uncompressed);
-        ZstdEncoder.writeVarIntAt(out, frameStart, frameLength);
+        writeVarIntAt(out, FRAME_LENGTH_SLOT, uncompressed);
+        writeVarIntAt(out, frameStart, frameLength);
         out.readerIndex(frameStart);
         PACKETS_COMPRESSED.increment();
         OUTPUT_BYTES.add(out.readableBytes());
@@ -262,7 +280,7 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
     private static ByteBuf rawAlloc(ChannelHandlerContext ctx, int uncompressed) {
         int sizeVarIntLength = varIntLength(uncompressed + 1);
         ByteBuf out = ctx.alloc().directBuffer(sizeVarIntLength + 1 + uncompressed);
-        ZstdEncoder.writeVarInt(out, uncompressed + 1);
+        writeVarInt(out, uncompressed + 1);
         return out;
     }
 

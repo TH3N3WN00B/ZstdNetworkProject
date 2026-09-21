@@ -128,67 +128,54 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         return level;
     }
 
-    @Override
-    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
-        try {
-            super.handlerRemoved(ctx);
-        } finally {
-            processor.discardAll();
-        }
-    }
-
-    private void ensureCloseCleanup(ChannelHandlerContext ctx) {
-        if (closeCleanupAttached) {
-            return;
-        }
-        closeCleanupAttached = true;
-        ctx.channel().closeFuture().addListener(future -> processor.discardAll());
-    }
-
-    public static void writeVarInt(ByteBuf buf, int value) {
-        while ((value & ~0x7F) != 0) {
-            buf.writeByte((value & 0x7F) | 0x80);
-            value >>>= 7;
-        }
-        buf.writeByte(value);
-    }
-
-    public static void writeVarIntAt(ByteBuf buf, int index, int value) {
-        while ((value & ~0x7F) != 0) {
+    /**
+     * Optimized VarInt encoding for high-throughput paths.
+     * Uses bit manipulation instead of repeated checks for better branch prediction.
+     */
+    private static void writeVarIntAtFast(ByteBuf buf, int index, int value) {
+        if (value == 0) {
+            buf.setByte(index, 0);
+        } else if ((value & ~0x7F) == 0) {
+            buf.setByte(index++, (value & 0x7F));
+        } else if ((value & (0xFFFFFFFF << 7)) == 0) {
             buf.setByte(index++, (value & 0x7F) | 0x80);
-            value >>>= 7;
+            buf.setByte(index++, value >>> 7);
+        } else if ((value & (0xFFFFFFFF << 14)) == 0) {
+            buf.setByte(index++, (value & 0x7F) | 0x80);
+            buf.setByte(index++, (value >>> 7) & 0x7F);
+            buf.setByte(index++, value >>> 14);
+        } else if ((value & (0xFFFFFFFF << 21)) == 0) {
+            buf.setByte(index++, (value & 0x7F) | 0x80);
+            buf.setByte(index++, (value >>> 7) & 0x7F);
+            buf.setByte(index++, (value >>> 14) & 0x7F);
+            buf.setByte(index++, value >>> 21);
+        } else {
+            // 5-byte varint (maximum for int)
+            buf.setByte(index++, (value & 0x7F) | 0x80);
+            buf.setByte(index++, (value >>> 7) & 0x7F);
+            buf.setByte(index++, (value >>> 14) & 0x7F);
+            buf.setByte(index++, (value >>> 21) & 0x7F);
+            buf.setByte(index++, value >>> 28);
         }
-        buf.setByte(index, value);
-    }
-
-    public static int varIntLength(int value) {
-        if ((value & (0xFFFFFFFF << 7)) == 0) {
-            return 1;
-        }
-        if ((value & (0xFFFFFFFF << 14)) == 0) {
-            return 2;
-        }
-        if ((value & (0xFFFFFFFF << 21)) == 0) {
-            return 3;
-        }
-        if ((value & (0xFFFFFFFF << 28)) == 0) {
-            return 4;
-        }
-        return 5;
     }
 
     /**
      * Whether the compressed frame (varint + compressed payload) is smaller than sending the
      * packet raw (one zero varint byte + the payload).
      */
-    private static boolean beneficial(int readable, int compressedSize) {
-        return varIntLength(readable) + compressedSize < 1 + readable;
+    static boolean beneficial(int readable, int compressedSize) {
+        // Fast varint length calculation using bit manipulation
+        if ((readable & (0xFFFFFFFF << 7)) == 0) return compressedSize < readable;
+        if ((readable & (0xFFFFFFFF << 14)) == 0) return compressedSize < readable - 1;
+        if ((readable & (0xFFFFFFFF << 21)) == 0) return compressedSize < readable - 2;
+        if ((readable & (0xFFFFFFFF << 28)) == 0) return compressedSize < readable - 3;
+        return compressedSize < readable - 4;
     }
 
     /** Encodes a sub-threshold packet as {@code varint(0) + raw}. Releases {@code msg}. */
     private static void writeRaw(ChannelHandlerContext ctx, ByteBuf msg, int readable, ChannelPromise promise) {
         ByteBuf out = ctx.alloc().directBuffer(1 + readable);
-        writeVarInt(out, 0);
+        out.writeByte(0); // varint(0)
         out.writeBytes(msg);
         OUTPUT_BYTES.add(out.readableBytes());
         msg.release();
@@ -211,12 +198,19 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             deflater.finish();
             int varIntLen = varIntLength(readable);
             out = ctx.alloc().directBuffer(varIntLen + ZstdCodecCtx.deflateBound(readable));
-            writeVarInt(out, readable);
-            // deflateBound is a guaranteed upper bound on the output, so with a scratch buffer of
-            // that size a single deflate() call produces the whole stream; finished() confirms it.
-            // The old loop was only needed because the scratch was fixed-size.
+            // Write varint manually
+            int idx = 0;
+            int temp = readable;
+            while ((temp & ~0x7F) != 0) {
+                out.setByte(idx++, (temp & 0x7F) | 0x80);
+                temp >>>= 7;
+            }
+            out.setByte(idx, temp);
+
+            // Deflate directly
             byte[] dst = ZstdCodecCtx.scratch(ZstdCodecCtx.deflateBound(readable));
             int size = deflater.deflate(dst);
+
             if (!deflater.finished()) {
                 throw new IllegalStateException("zlib compression bound unexpectedly insufficient for "
                         + readable + " input bytes");
@@ -225,13 +219,17 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
                 throw new IllegalStateException("zlib compression stalled: deflate() produced "
                         + size + " bytes and is not generating output (declaredSize=" + readable + ")");
             }
+
             out.writeBytes(dst, 0, size);
+
             if (out.readableBytes() <= varIntLen) {
                 throw new IllegalStateException("zlib compression produced an empty stream for "
                         + readable + " input bytes");
             }
+
             PACKETS_COMPRESSED.increment();
             OUTPUT_BYTES.add(out.readableBytes());
+
             ByteBuf frame = out;
             out = null;
             ctx.write(frame, promise);
@@ -288,10 +286,10 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             }
 
             out.writerIndex(varIntLength + size);
-            writeVarIntAt(out, 0, readable);
+            writeVarIntAtFast(out, 0, readable);
             if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
                 out.clear();
-                writeVarInt(out, 0);
+                out.writeByte(0); // varint(0)
                 out.writeBytes(in, in.readerIndex(), readable);
             } else {
                 PACKETS_COMPRESSED.increment();
@@ -308,6 +306,32 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
                 out.release();
             }
         }
+    }
+
+    private void ensureCloseCleanup(ChannelHandlerContext ctx) {
+        if (closeCleanupAttached) {
+            return;
+        }
+        closeCleanupAttached = true;
+        ctx.channel().closeFuture().addListener(future -> processor.discardAll());
+    }
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        try {
+            super.handlerRemoved(ctx);
+        } finally {
+            processor.discardAll();
+        }
+    }
+
+    /** Computes the number of bytes needed for a VarInt encoding. */
+    public static int varIntLength(int value) {
+        if ((value & (0xFFFFFFFF << 7)) == 0) return 1;
+        if ((value & (0xFFFFFFFF << 14)) == 0) return 2;
+        if ((value & (0xFFFFFFFF << 21)) == 0) return 3;
+        if ((value & (0xFFFFFFFF << 28)) == 0) return 4;
+        return 5;
     }
 
     private static final class RawWork extends AbstractRawWork {
