@@ -72,6 +72,7 @@ gradle_args=()
     if [[ "$line" =~ ^[[:space:]]*([A-Za-z0-9_.-]+)[[:space:]]*=[[:space:]]*(.+)[[:space:]]*$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
+      val="${val%$'\r'}"  # group files can be CRLF; drop the trailing carriage return
       gradle_args+=("-P${key}=${val}")
       case "$key" in
         neoforge_version) neoforge_version="$val" ;;
@@ -125,7 +126,7 @@ echo '=== Building Velocity ==='
 if ./gradlew :velocity:build --console=plain; then
   find velocity/build/libs -maxdepth 1 -name '*.jar' \
     ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
-    -name "*-$mod_version.jar" \
+    -name "*-${mod_version}-mc*.jar" \
     -exec cp {} "$dist" \;
 else
   echo "BUILD FAILED for velocity" >&2
