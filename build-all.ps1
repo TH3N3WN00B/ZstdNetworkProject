@@ -64,12 +64,14 @@ function Test-ModuleVersion {
     return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -ne 'NONE'
 }
 
-# mod_version (gradle.properties) drives the jar names and manifests.
+# mod_version and velocity_version (gradle.properties) drive the jar names and manifests.
 $modVersion = ''
+$velocityVersion = ''
 foreach ($line in Get-Content (Join-Path $PROJECT_ROOT 'gradle.properties')) {
     if ($line.Trim().StartsWith('mod_version=')) {
         $modVersion = $line.Trim().Substring('mod_version='.Length).Trim("`r", "`n")
-        break
+    } elseif ($line.Trim().StartsWith('velocity_version=')) {
+        $velocityVersion = $line.Trim().Substring('velocity_version='.Length).Trim("`r", "`n")
     }
 }
 if ([string]::IsNullOrWhiteSpace($modVersion)) {
@@ -77,6 +79,7 @@ if ([string]::IsNullOrWhiteSpace($modVersion)) {
     exit 1
 }
 Write-Host "mod_version=$modVersion"
+Write-Host "velocity_version=$velocityVersion"
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 Get-ChildItem -Path $dist -Filter '*.jar' -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -135,7 +138,7 @@ try {
         $failed.Add('velocity')
     } else {
         $jars = Get-ChildItem -Path (Join-Path $PROJECT_ROOT 'velocity\build\libs') `
-            -Filter "*-$modVersion-mc*.jar" -ErrorAction SilentlyContinue |
+            -Filter "*-$modVersion-$velocityVersion.jar" -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notmatch 'sources|javadoc|dev' }
         foreach ($jar in $jars) {
             Copy-Item -Path $jar.FullName -Destination $dist

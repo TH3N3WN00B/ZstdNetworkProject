@@ -38,10 +38,11 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 y 26.3. Para 26.3 Paper aún no publica builds estables (solo alpha), y NeoForge/Fabric usan sus builds beta.
 
 Artefactos: `zstd-neoforge-beta-0.3.1-mc<version>.jar`, `zstd-fabric-beta-0.3.1-mc<version>.jar`,
-`zstd-paper-beta-0.3.1-mc<version>.jar`, `zstd-velocity-beta-0.3.1-mc<version>.jar` y
-`zstd-common-beta-0.3.1-mc<version>.jar` (esquema uniforme `zstd-<plataforma>-<mod-version>-mc<mc-version>`
-para todos los artefactos; Velocity se compila una única vez, sin variantes por versión de MC).
-En `dist/` tras compilar.
+`zstd-paper-beta-0.3.1-mc<version>.jar`, `zstd-common-beta-0.3.1-mc<version>.jar` (esquema
+`zstd-<plataforma>-<mod-version>-mc<mc-version>` para plataformas MC) y
+`zstd-velocity-beta-0.3.1-4.2.1-SNAPSHOT.jar` (Velocity se compila una única vez y su jar lleva la
+versión de la Velocity API contra la que se compiló, `-<velocity-version>`, en lugar de una versión
+de MC). En `dist/` tras compilar.
 
 ## Instalación
 

@@ -30,6 +30,7 @@ dependencies {
 
 processResources {
     def ver = project.version.toString()
+    inputs.property "version", ver
     filesMatching('velocity-plugin.json') {
         expand 'version': ver
     }

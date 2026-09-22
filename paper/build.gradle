@@ -18,6 +18,7 @@ dependencies {
 
 processResources {
     def ver = project.version.toString()
+    inputs.property "version", ver
     filesMatching('plugin.yml') {
         expand 'version': ver
     }

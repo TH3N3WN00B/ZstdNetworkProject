@@ -1,7 +1,6 @@
 // Enforce Netty 4.2.18 for protocol compatibility (all modules)
 ext {
     nettyVersion = '4.2.18'
-    velocityVersion = '4.2.1-SNAPSHOT' // Requires JVM 25+, targets Java 21 bytecode
     // Minecraft era: 1.21.x is obfuscated (yarn remap via loom-remap), 26.x is
     // unobfuscated (plain loom). Derived from the -Pminecraft_version group value
     // so fabric can pick its plugin at apply time. Mirrors neoforge.build.gradle.
@@ -53,7 +52,12 @@ subprojects {
     apply plugin: 'maven-publish'
 
     group = rootProject.maven_group
-    version = "${rootProject.mod_version}-mc${rootProject.minecraft_version}"
+    // Velocity is version-independent: its artifact carries the Velocity API version it targets
+    // (e.g. zstd-velocity-4.2.1-SNAPSHOT.jar), not a Minecraft version. Every other module is
+    // bound to the Minecraft group being built (-mc<version>).
+    version = project.name == 'velocity'
+            ? "${rootProject.mod_version}-${rootProject.velocity_version}"
+            : "${rootProject.mod_version}-mc${rootProject.minecraft_version}"
 
     base {
         archivesName = "zstd-${project.name}"
@@ -75,7 +79,7 @@ subprojects {
     // Only applies to projects that need Velocity (velocity module)
     if (project.name == 'velocity') {
         dependencies {
-            implementation "com.velocitypowered:velocity-api:${rootProject.ext.velocityVersion}"
+            implementation "com.velocitypowered:velocity-api:${rootProject.velocity_version}"
             testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
         }
     }

@@ -123,10 +123,11 @@ gradle_args=()
 done
 
 echo '=== Building Velocity ==='
+velocity_version="$(grep '^velocity_version=' gradle.properties | cut -d= -f2 | tr -d ' \r\n')"
 if ./gradlew :velocity:build --console=plain; then
   find velocity/build/libs -maxdepth 1 -name '*.jar' \
     ! -name '*sources*' ! -name '*javadoc*' ! -name '*dev*' \
-    -name "*-${mod_version}-mc*.jar" \
+    -name "*-${mod_version}-${velocity_version}.jar" \
     -exec cp {} "$dist" \;
 else
   echo "BUILD FAILED for velocity" >&2
