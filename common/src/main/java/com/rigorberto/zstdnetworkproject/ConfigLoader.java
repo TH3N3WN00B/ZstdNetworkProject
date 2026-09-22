@@ -26,6 +26,8 @@ public final class ConfigLoader {
     public static final String KEY_HEX_DUMP = "hex-dump";
     public static final String KEY_MATCH_SERVER_LEVEL = "match-server-level";
     public static final String KEY_USE_VIRTUAL_THREADS = "use-virtual-threads";
+    public static final String KEY_RATE_LIMIT_BYTES_PER_SECOND = "rate-limit-bytes-per-second";
+    public static final String KEY_RATE_LIMIT_BURST_BYTES = "rate-limit-burst-bytes";
 
     public static final int DEFAULT_COMPRESSION_LEVEL = 3;
     public static final int MAX_COMPRESSION_LEVEL = 22;
@@ -39,7 +41,7 @@ public final class ConfigLoader {
      * whenever a new setting is added: existing config.yml files are then auto-updated, appending
      * the new setting at the bottom of the file.
      */
-    public static final int CONFIG_VERSION = 10;
+    public static final int CONFIG_VERSION = 11;
 
     /**
      * Each block is the comment lines plus the {@code key: value} line for one setting. The first
@@ -106,7 +108,15 @@ public final class ConfigLoader {
             "# without pinning a platform thread, so the game/proxy threads are never\n" +
             "# starved while large packets (de)compress. On Java < 21 a fixed pool of\n" +
             "# platform threads is always used instead. Enabled by default.\n" +
-            "use-virtual-threads: true"
+            "use-virtual-threads: true",
+            "# Maximum uncompressed bytes a single connection may make the decoder commit\n" +
+            "# per second (per-channel token bucket). Guards against floods of frames\n" +
+            "# that declare huge uncompressed sizes in rapid succession. 0 = disabled.\n" +
+            "# Server/proxy side; leave at 0 unless you see decompression floods.\n" +
+            "rate-limit-bytes-per-second: 0",
+            "# Token-bucket burst capacity in bytes. 0 = two seconds' worth of the\n" +
+            "# configured rate. Allows legit chunk bursts without tripping the gate.\n" +
+            "rate-limit-burst-bytes: 0"
     );
 
     private static final String DEFAULT_CONFIG =
@@ -163,6 +173,8 @@ public final class ConfigLoader {
         settings.setHexDump(parseBoolean(values.get(KEY_HEX_DUMP), false));
         settings.setMatchServerLevel(parseBoolean(values.get(KEY_MATCH_SERVER_LEVEL), false));
         settings.setUseVirtualThreads(parseBoolean(values.get(KEY_USE_VIRTUAL_THREADS), true));
+        settings.setRateLimitBytesPerSecond(parseLong(values.get(KEY_RATE_LIMIT_BYTES_PER_SECOND), 0));
+        settings.setRateLimitBurstBytes(parseLong(values.get(KEY_RATE_LIMIT_BURST_BYTES), 0));
         ZstdAsyncPools.setUseVirtualThreads(settings.isUseVirtualThreads());
         return settings;
     }
@@ -279,6 +291,17 @@ public final class ConfigLoader {
         }
         String trimmed = value.trim();
         return "true".equalsIgnoreCase(trimmed) || "yes".equalsIgnoreCase(trimmed);
+    }
+
+    private static long parseLong(String value, long fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static int clamp(int value, int min, int max) {

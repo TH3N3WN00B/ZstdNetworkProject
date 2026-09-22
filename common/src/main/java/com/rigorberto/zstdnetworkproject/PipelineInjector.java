@@ -82,7 +82,7 @@ public final class PipelineInjector {
         if (decoderName != null) {
             ChannelHandler decoder = pipeline.get(decoderName);
             if (decoder != null && !(decoder instanceof ZstdDecoder)) {
-                pipeline.replace(decoderName, decoderName, new ZstdDecoder());
+                pipeline.replace(decoderName, decoderName, new ZstdDecoder(settings));
                 replaced = true;
             }
         }

@@ -20,20 +20,18 @@ import java.util.concurrent.atomic.LongAdder;
  * with a per-channel FIFO preserving packet order. While the pool is idle a packet is encoded
  * directly in {@link #write} without allocating a work object.
  *
- * <p>When the input {@link ByteBuf} is direct, the payload is compressed straight into the final
- * frame buffer (a fixed five-byte slot is reserved at the front and the frame-length VarInt is
- * written at the computed offset afterwards), so there is no intermediate payload buffer and no
- * copy. When {@link ZstdSettings#isCompressIfBeneficial()} is enabled, a packet whose compressed
- * form would not actually be smaller is sent uncompressed instead.
+ * <p>The payload is compressed into a dedicated direct buffer at position 0 (zstd-jni's buffer
+ * entry points write at the absolute base of a buffer and ignore pre-set positions, so the payload
+ * must not be compressed into a view offset past the varint slots) and the frame is then assembled
+ * with forward writes as {@code varint(frameLength), varint(uncompressedSize), payload}. When
+ * {@link ZstdSettings#isCompressIfBeneficial()} is enabled, a packet whose compressed form would
+ * not actually be smaller is sent uncompressed instead.
  */
 public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
 
     public static final LongAdder PACKETS_COMPRESSED = new LongAdder();
     public static final LongAdder INPUT_BYTES = new LongAdder();
     public static final LongAdder OUTPUT_BYTES = new LongAdder();
-
-    /** Maximum length of a VarInt frame-length prefix; the payload is always written after this. */
-    private static final int FRAME_LENGTH_SLOT = 5;
 
     private final int compressionLevel;
     private final ZstdSettings settings;
@@ -114,15 +112,6 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         buf.writeByte(value);
     }
 
-    /** Writes {@code value} as a VarInt at {@code index} without moving {@code buf}'s indices. */
-    private static void writeVarIntAt(ByteBuf buf, int index, int value) {
-        while ((value & ~0x7F) != 0) {
-            buf.setByte(index++, (value & 0x7F) | 0x80);
-            value >>>= 7;
-        }
-        buf.setByte(index, value);
-    }
-
     /**
      * Whether the compressed frame (length varint + uncompressed-size varint + compressed payload)
      * is smaller than the raw frame ({@code length+1, 0x00, payload}).
@@ -169,12 +158,16 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
         int bound = ZstdCodecCtx.compressBound(uncompressed);
         int sizeVarIntLength = varIntLength(uncompressed);
 
-        ByteBuf out = ctx.alloc().directBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength + bound);
+        // zstd-jni's compress(ByteBuffer, ByteBuffer) entry points write at the buffer's absolute
+        // base and ignore a pre-set position, so the payload is compressed into a dedicated buffer
+        // at position 0 and the frame is assembled afterwards (same corruption that produced
+        // `00 b5 2f fd ...` magic frames from {@link ZstdEncoder} before its fix).
+        ByteBuf payload = ctx.alloc().directBuffer(bound);
         // zstd-jni only accepts direct NIO buffers, so anything else (heap allocator, a composite
         // whose nioBuffer() would merge into a heap buffer) is staged through a direct copy first.
         ByteBuf staged = ZstdCodecCtx.isNativeReadable(in) ? null : ctx.alloc().directBuffer(uncompressed);
         try {
-            ByteBuffer dst = out.nioBuffer(FRAME_LENGTH_SLOT + sizeVarIntLength, bound);
+            ByteBuffer dst = payload.nioBuffer(0, bound);
             ByteBuffer src;
             if (staged == null) {
                 src = in.nioBuffer();
@@ -187,55 +180,32 @@ public class ZstdFrameEncoder extends MessageToByteEncoder<ByteBuf> {
             if (size < 0) {
                 throw new IllegalStateException("zstd compression failed: " + size);
             }
-            ByteBuf frame = finishFrame(out, size, sizeVarIntLength, ctx, in, uncompressed, settings);
-            out = null;
-            return frame;
+            payload.writerIndex(size);
+
+            if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
+                ByteBuf raw = rawAlloc(ctx, uncompressed);
+                raw.writeByte(0);
+                raw.writeBytes(in, in.readerIndex(), uncompressed);
+                OUTPUT_BYTES.add(raw.readableBytes());
+                return raw;
+            }
+
+            // Assemble varint(frameLength), varint(uncompressedSize), payload with forward writes.
+            int frameLength = sizeVarIntLength + size;
+            ByteBuf out = ctx.alloc().directBuffer(varIntLength(frameLength) + sizeVarIntLength + size);
+            writeVarInt(out, frameLength);
+            writeVarInt(out, uncompressed);
+            out.writeBytes(payload, 0, size);
+            PACKETS_COMPRESSED.increment();
+            OUTPUT_BYTES.add(out.readableBytes());
+            dumpFrame("proxy-frame", out, uncompressed, size, frameLength);
+            return out;
         } finally {
             if (staged != null) {
                 staged.release();
             }
-            if (out != null) {
-                out.release();
-            }
+            payload.release();
         }
-    }
-
-    /**
-     * Writes the size VarInt and the frame-length VarInt around an already-compressed payload that
-     * was written into {@code out} starting at {@code FRAME_LENGTH_SLOT + sizeVarIntLength}. The
-     * frame-length VarInt only needs as many bytes as its value takes, so the frame starts at
-     * {@code FRAME_LENGTH_SLOT - frameLengthVarIntLength} and the reader index is set accordingly;
-     * no copy is performed.
-     */
-    private static ByteBuf finishFrame(ByteBuf out, int size, int sizeVarIntLength,
-                                        ChannelHandlerContext ctx, ByteBuf in, int uncompressed,
-                                        ZstdSettings settings) {
-        if (settings.isCompressIfBeneficial() && !beneficial(uncompressed, size)) {
-            // Build the replacement before releasing the compressed frame, so a failure here
-            // leaves `out` intact for the caller's cleanup instead of double-releasing it.
-            ByteBuf raw = rawAlloc(ctx, uncompressed);
-            try {
-                raw.writeByte(0);
-                raw.writeBytes(in, in.readerIndex(), uncompressed);
-            } catch (Throwable t) {
-                raw.release();
-                throw t;
-            }
-            out.release();
-            OUTPUT_BYTES.add(raw.readableBytes());
-            return raw;
-        }
-        int frameLength = sizeVarIntLength + size;
-        int frameLengthVarIntLength = varIntLength(frameLength);
-        int frameStart = FRAME_LENGTH_SLOT - frameLengthVarIntLength;
-        out.writerIndex(FRAME_LENGTH_SLOT + sizeVarIntLength + size);
-        writeVarIntAt(out, FRAME_LENGTH_SLOT, uncompressed);
-        writeVarIntAt(out, frameStart, frameLength);
-        out.readerIndex(frameStart);
-        PACKETS_COMPRESSED.increment();
-        OUTPUT_BYTES.add(out.readableBytes());
-        dumpFrame("proxy-frame", out, uncompressed, size, frameLength);
-        return out;
     }
 
     private static void dumpFrame(String tag, ByteBuf out, int uncompressed, int size, int frameLength) {

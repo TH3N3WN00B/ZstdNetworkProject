@@ -76,6 +76,9 @@ final class OrderedAsyncProcessor {
     }
 
     void add(ChannelHandlerContext ctx, Work work) {
+        if (work == null) {
+            return; // Defensive: a null unit has nothing to queue (only our own code calls this).
+        }
         if (queuedBytes + work.queuedBytes() > MAX_QUEUED_BYTES) {
             overflow(ctx, work);
             return;

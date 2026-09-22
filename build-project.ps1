@@ -1,4 +1,4 @@
-# ZstdNetworkProject - Beta 0.3.0 Build Script
+# ZstdNetworkProject - Beta 0.3.1 Build Script
 # Compiles and tests the project locally with a local JDK + the Gradle wrapper.
 
 param(
@@ -42,7 +42,7 @@ function Write-Footer {
     exit $ExitCode
 }
 
-Write-Header "ZstdNetworkProject Build v0.3.0"
+Write-Header "ZstdNetworkProject Build v0.3.1"
 
 # Check the requested local JDK exists
 $JavaHome = "C:\Program Files\Eclipse Adoptium\jdk-$TargetJava.0.0.14-hotspot"

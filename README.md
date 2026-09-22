@@ -3,7 +3,7 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-0.3.0 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-0.3.1 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
@@ -32,15 +32,14 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 |---|---|---|---|---|---|
 | 1.21.4 – 1.21.11 (ofuscado) | 21 | ✓ | ✓ | ✓* | ✓ |
 | 26.1 / 26.1.2 / 26.2 (sin ofuscar) | 25 | ✓ | ✓ | ✓* | ✓ |
-| 26.3 (sin ofuscar) | 25 | ✗ | ✗ | ✓* (alpha) | ✓ |
+| 26.3 (sin ofuscar) | 25 | ✓ (beta) | ✓ | ✓* (alpha) | ✓ |
 
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2
-y 26.3. Para 26.3 Paper aún no publica builds estables (solo alpha/rc), y no existen builds de NeoForge/Fabric
-para esa versión, así que el grupo `26.3` compila únicamente los módulos paper y velocity.
+y 26.3. Para 26.3 Paper aún no publica builds estables (solo alpha), y NeoForge/Fabric usan sus builds beta.
 
-Artefactos: `zstd-neoforge-beta-0.3.0-mc<version>.jar`, `zstd-fabric-beta-0.3.0-mc<version>.jar`,
-`zstd-paper-beta-0.3.0-mc<version>.jar`, `zstd-velocity-beta-0.3.0-mc<version>.jar` y
-`zstd-common-beta-0.3.0-mc<version>.jar` (esquema uniforme `zstd-<plataforma>-<mod-version>-mc<mc-version>`
+Artefactos: `zstd-neoforge-beta-0.3.1-mc<version>.jar`, `zstd-fabric-beta-0.3.1-mc<version>.jar`,
+`zstd-paper-beta-0.3.1-mc<version>.jar`, `zstd-velocity-beta-0.3.1-mc<version>.jar` y
+`zstd-common-beta-0.3.1-mc<version>.jar` (esquema uniforme `zstd-<plataforma>-<mod-version>-mc<mc-version>`
 para todos los artefactos; Velocity se compila una única vez, sin variantes por versión de MC).
 En `dist/` tras compilar.
 

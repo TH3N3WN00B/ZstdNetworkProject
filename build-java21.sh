@@ -11,7 +11,7 @@ echo "ZstdNetworkProject Build - Java 21"
 echo "=============================================="
 
 # Default versions (obfuscated era)
-MOD_VERSION="${MOD_VERSION:-0.3.0}"
+MOD_VERSION="${MOD_VERSION:-0.3.1}"
 MINECRAFT_VERSION="${MINECRAFT_VERSION:-1.21.11}"
 
 # Force Java 21

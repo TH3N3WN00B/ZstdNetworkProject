@@ -147,6 +147,11 @@ public final class ZstdAsyncPools {
      * The returned buffer is zeroed and ready to write.
      */
     static byte[] acquireSmallBuffer(int maxCapacity) {
+        // Defensive clamp: a non-positive request is treated as an empty buffer request and can
+        // never reach the pooled path with a negative capacity.
+        if (maxCapacity < 0) {
+            maxCapacity = 0;
+        }
         if (maxCapacity > 65536) {
             return new byte[maxCapacity];
         }

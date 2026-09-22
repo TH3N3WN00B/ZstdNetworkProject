@@ -129,37 +129,6 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
     }
 
     /**
-     * Optimized VarInt encoding for high-throughput paths.
-     * Uses bit manipulation instead of repeated checks for better branch prediction.
-     */
-    private static void writeVarIntAtFast(ByteBuf buf, int index, int value) {
-        if (value == 0) {
-            buf.setByte(index, 0);
-        } else if ((value & ~0x7F) == 0) {
-            buf.setByte(index++, (value & 0x7F));
-        } else if ((value & (0xFFFFFFFF << 7)) == 0) {
-            buf.setByte(index++, (value & 0x7F) | 0x80);
-            buf.setByte(index++, value >>> 7);
-        } else if ((value & (0xFFFFFFFF << 14)) == 0) {
-            buf.setByte(index++, (value & 0x7F) | 0x80);
-            buf.setByte(index++, (value >>> 7) & 0x7F);
-            buf.setByte(index++, value >>> 14);
-        } else if ((value & (0xFFFFFFFF << 21)) == 0) {
-            buf.setByte(index++, (value & 0x7F) | 0x80);
-            buf.setByte(index++, (value >>> 7) & 0x7F);
-            buf.setByte(index++, (value >>> 14) & 0x7F);
-            buf.setByte(index++, value >>> 21);
-        } else {
-            // 5-byte varint (maximum for int)
-            buf.setByte(index++, (value & 0x7F) | 0x80);
-            buf.setByte(index++, (value >>> 7) & 0x7F);
-            buf.setByte(index++, (value >>> 14) & 0x7F);
-            buf.setByte(index++, (value >>> 21) & 0x7F);
-            buf.setByte(index++, value >>> 28);
-        }
-    }
-
-    /**
      * Whether the compressed frame (varint + compressed payload) is smaller than sending the
      * packet raw (one zero varint byte + the payload).
      */
@@ -198,14 +167,17 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             deflater.finish();
             int varIntLen = varIntLength(readable);
             out = ctx.alloc().directBuffer(varIntLen + ZstdCodecCtx.deflateBound(readable));
-            // Write varint manually
-            int idx = 0;
+            // Write the uncompressed-size varint with writeByte so the writer index advances; the
+            // zlib stream below must land *after* it. Writing the varint with setByte (which does
+            // not move the writer index) and then appending the payload overwrote the varint with
+            // the zlib header, emitting a bare "78 9C ..." stream that peers misread as a wrong
+            // size prefix (declared=120 for the CMF byte) and crashed on.
             int temp = readable;
             while ((temp & ~0x7F) != 0) {
-                out.setByte(idx++, (temp & 0x7F) | 0x80);
+                out.writeByte((temp & 0x7F) | 0x80);
                 temp >>>= 7;
             }
-            out.setByte(idx, temp);
+            out.writeByte(temp);
 
             // Deflate directly
             byte[] dst = ZstdCodecCtx.scratch(ZstdCodecCtx.deflateBound(readable));
@@ -266,12 +238,19 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
         int bound = ZstdCodecCtx.compressBound(readable);
         int varIntLength = varIntLength(readable);
 
-        ByteBuf out = ctx.alloc().directBuffer(varIntLength + bound);
+        // zstd-jni's compress(ByteBuffer, ByteBuffer) entry points write at the buffer's absolute
+        // base and ignore a pre-set position, so the payload is compressed into a dedicated buffer
+        // at position 0 and the frame is assembled afterwards. Compressing straight into `out`
+        // past the varint slot used to place the stream at `out`'s base regardless of the NIO view
+        // offset, after which the fill-in varint clobbered the first bytes of the stream and the
+        // emitted frame opened `00 b5 2f fd ...` (magic `28 b5 2f fd` with its first byte zeroed),
+        // which peers sniffed as neither zstd nor zlib and disconnected on.
+        ByteBuf payload = ctx.alloc().directBuffer(bound);
         // zstd-jni only accepts direct NIO buffers, so anything else (heap allocator, a composite
         // whose nioBuffer() would merge into a heap buffer) is staged through a direct copy first.
         ByteBuf staged = ZstdCodecCtx.isNativeReadable(in) ? null : ctx.alloc().directBuffer(readable);
         try {
-            ByteBuffer dst = out.nioBuffer(varIntLength, bound);
+            ByteBuffer dst = payload.nioBuffer(0, bound);
             ByteBuffer src;
             if (staged == null) {
                 src = in.nioBuffer();
@@ -284,27 +263,35 @@ public class ZstdEncoder extends MessageToByteEncoder<ByteBuf> {
             if (size < 0) {
                 throw new IllegalStateException("zstd compression failed: " + size);
             }
+            payload.writerIndex(size);
 
-            out.writerIndex(varIntLength + size);
-            writeVarIntAtFast(out, 0, readable);
             if (settings.isCompressIfBeneficial() && !beneficial(readable, size)) {
-                out.clear();
+                ByteBuf out = ctx.alloc().directBuffer(1 + readable);
                 out.writeByte(0); // varint(0)
                 out.writeBytes(in, in.readerIndex(), readable);
-            } else {
-                PACKETS_COMPRESSED.increment();
+                OUTPUT_BYTES.add(out.readableBytes());
+                return out;
             }
+
+            // Assemble varint(uncompressedSize) + varint-streamed payload explicitly; the writes
+            // advance the writer index so the payload lands right after the size prefix.
+            ByteBuf out = ctx.alloc().directBuffer(varIntLength + size);
+            int temp = readable;
+            while ((temp & ~0x7F) != 0) {
+                out.writeByte((temp & 0x7F) | 0x80);
+                temp >>>= 7;
+            }
+            out.writeByte(temp);
+            out.writeBytes(payload, 0, size);
+
+            PACKETS_COMPRESSED.increment();
             OUTPUT_BYTES.add(out.readableBytes());
-            ByteBuf frame = out;
-            out = null;
-            return frame;
+            return out;
         } finally {
             if (staged != null) {
                 staged.release();
             }
-            if (out != null) {
-                out.release();
-            }
+            payload.release();
         }
     }
 

@@ -1,10 +1,12 @@
 package com.rigorberto.zstdnetworkproject;
 
+import com.github.luben.zstd.Zstd;
 import com.github.luben.zstd.ZstdDecompressCtx;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.zip.DataFormatException;
@@ -52,7 +54,19 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             ThreadLocal.withInitial(Inflater::new);
 
     private final OrderedAsyncProcessor processor = new OrderedAsyncProcessor(OrderedAsyncProcessor.Direction.INBOUND);
+    private final ChannelRateLimiter rateLimiter;
     private boolean warnedRawFrame;
+    private boolean rateLimitLogged;
+
+    /** Rate limiting disabled (config default). Kept for tests and legacy construction sites. */
+    public ZstdDecoder() {
+        this(null);
+    }
+
+    /** Applies the inbound per-channel rate limit from {@code settings} (null disables it). */
+    public ZstdDecoder(ZstdSettings settings) {
+        this.rateLimiter = settings == null ? null : ChannelRateLimiter.of(settings);
+    }
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
@@ -65,6 +79,24 @@ public class ZstdDecoder extends ByteToMessageDecoder {
 
         if (uncompressedSize < 0) {
             throw new IllegalArgumentException("Invalid uncompressed size: " + uncompressedSize);
+        }
+
+        // Per-channel rate gate (opt-in, off by default): charge every inbound frame (raw payload
+        // length, or the declared size for compressed frames) against a token bucket before any
+        // decompression work is committed. Tripping it lands the connection, like the queue limit.
+        ChannelRateLimiter limiter = rateLimiter;
+        if (limiter != null) {
+            long charge = uncompressedSize == 0 ? in.readableBytes() : (long) uncompressedSize;
+            if (!limiter.charge(charge)) {
+                if (!rateLimitLogged) {
+                    rateLimitLogged = true;
+                    LOGGER.warn("Closing connection to {}: inbound uncompressed traffic exceeds the "
+                            + "configured rate limit. Raise rate-limit-bytes-per-second if this is a "
+                            + "legitimate workload.", HexDump.peerOf(ctx));
+                }
+                throw new IllegalStateException(
+                        "Inbound rate limit exceeded (uncompressed bytes per second)");
+            }
         }
 
         if (uncompressedSize == 0) {
@@ -88,29 +120,21 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         }
 
         if (in.readableBytes() >= 4 && isZstdMagic(in)) {
-            ZSTD_PACKETS.increment();
-            ZSTD_BYTES.add(uncompressedSize);
-            ZstdCapability.markZstdObserved(ctx.channel());
-            if (TraceDump.isEnabled()) {
-                int frameBytes = in.readableBytes();
-                TraceDump.dump("client-frame",
-                        "size=" + uncompressedSize + " frameBytes=" + frameBytes
-                                + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
-            }
-            if (HexDump.isEnabled()) {
-                HexDump.dump("frame-in", "IN zstd declared=" + uncompressedSize
-                        + " peer=" + HexDump.peerOf(ctx), in);
-            }
-            ByteBuf payload = in.readRetainedSlice(in.readableBytes());
-            if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
-                try {
-                    out.add(decompressSync(ctx, payload, uncompressedSize));
-                } finally {
-                    payload.release();
-                }
-            } else {
-                processor.add(ctx, new ZstdWork(ctx, processor, payload, uncompressedSize));
-            }
+            handleZstdFrame(ctx, in, out, uncompressedSize, false);
+            return;
+        }
+
+        // Recovery for peers still running the encoder bug that emitted frames opening
+        // `00 b5 2f fd ...` (zstd magic `28 b5 2f fd` with its first byte zeroed). Only when the
+        // distinctive magic tail sits at bytes [1..3] AND a trial decompression with the byte
+        // restored yields exactly the declared size is the frame accepted as zstd; anything else
+        // falls through to the zlib recovery below. The plausibility gate runs first so a peer
+        // cannot reach the trial decompression (a new byte[uncompressedSize] heap allocation, up
+        // to MAX_UNCOMPRESSED_SIZE) with a tiny garbage frame declaring a huge size.
+        if (in.readableBytes() >= 4 && isZeroedZstdMagic(in)
+                && isPlausibleRepairCandidate(in.readableBytes(), uncompressedSize)
+                && isRepairedZstdCandidate(in, uncompressedSize)) {
+            handleZstdFrame(ctx, in, out, uncompressedSize, true);
             return;
         }
 
@@ -146,6 +170,129 @@ public class ZstdDecoder extends ByteToMessageDecoder {
                 && in.getByte(idx + 1) == ZSTD_MAGIC[1]
                 && in.getByte(idx + 2) == ZSTD_MAGIC[2]
                 && in.getByte(idx + 3) == ZSTD_MAGIC[3];
+    }
+
+    /**
+     * True when the payload looks like a zstd frame whose magic's first byte was zeroed by the old
+     * encoder bug ({@code 00 b5 2f fd ...}): the distinctive three-byte magic tail is present at
+     * bytes [1..3]. Callers still validate by actually decompressing (see
+     * {@link #isRepairedZstdCandidate}).
+     */
+    private static boolean isZeroedZstdMagic(ByteBuf in) {
+        int idx = in.readerIndex();
+        return in.getByte(idx + 1) == ZSTD_MAGIC[1]
+                && in.getByte(idx + 2) == ZSTD_MAGIC[2]
+                && in.getByte(idx + 3) == ZSTD_MAGIC[3];
+    }
+
+    /**
+     * Whether probing this zeroed-magic candidate is cheap enough to attempt. Every inbound frame
+     * whose bytes [1..3] equal {@code b5 2f fd} qualifies as a repair candidate, and the probe in
+     * {@link #isRepairedZstdCandidate} allocates a {@code byte[uncompressedSize]} heap array for
+     * the trial decompression; without a gate a peer could declare up to {@link #MAX_UNCOMPRESSED_SIZE}
+     * on a tiny garbage frame and make us allocate that much heap per frame at almost no bandwidth
+     * cost. Mirrors the zlib guard in {@link #inflateSync}: once the declared size reaches 1 MiB
+     * the frame bytes must back it with at least a 10:1 ratio. Genuine repaired frames always do
+     * (the observed one was 226 frame bytes for 553 declared), so the gate cannot reject a real
+     * old-encoder frame.
+     */
+    static boolean isPlausibleRepairCandidate(int frameBytes, int uncompressedSize) {
+        return !(uncompressedSize >= 1024 * 1024 && uncompressedSize > 10L * frameBytes);
+    }
+
+    /**
+     * Trial-decodes a candidate frame whose magic's first byte was zeroed with the byte restored to
+     * {@code 0x28}. True only when the restored payload decompresses to exactly the declared
+     * uncompressed size, matching what the peer's {@code varint(uncompressedSize)} promised.
+     */
+    private static boolean isRepairedZstdCandidate(ByteBuf in, int uncompressedSize) {
+        // Non-advancing slice: the caller's `in` must stay intact for the zlib fallback path.
+        ByteBuf probe = in.retainedSlice(in.readerIndex(), in.readableBytes());
+        try {
+            int len = probe.readableBytes();
+            byte[] restored = new byte[len];
+            probe.getBytes(probe.readerIndex(), restored);
+            restored[0] = ZSTD_MAGIC[0];
+            long n = Zstd.decompress(new byte[uncompressedSize], restored);
+            return !Zstd.isError(n) && n == uncompressedSize;
+        } catch (RuntimeException e) {
+            return false;
+        } finally {
+            probe.release();
+        }
+    }
+
+    /**
+     * Dispatches an accepted zstd frame (magic intact or repaired) to the decompression path,
+     * keeping counters, capability marking, tracing and frame ordering on the same rail as the
+     * original inline/async split. Repaired frames are rare one-off recoveries from unfixed peers
+     * and are processed inline to avoid introducing a second async work kind.
+     */
+    private void handleZstdFrame(ChannelHandlerContext ctx, ByteBuf in, List<Object> out,
+                                 int uncompressedSize, boolean repairedMagic) {
+        ZSTD_PACKETS.increment();
+        ZSTD_BYTES.add(uncompressedSize);
+        ZstdCapability.markZstdObserved(ctx.channel());
+        if (TraceDump.isEnabled()) {
+            int frameBytes = in.readableBytes();
+            TraceDump.dump("client-frame",
+                    "size=" + uncompressedSize + " frameBytes=" + frameBytes
+                            + " repaired=" + repairedMagic
+                            + " head=" + hex(in, in.readerIndex(), Math.min(frameBytes, 16)));
+        }
+        if (HexDump.isEnabled()) {
+            HexDump.dump("frame-in", "IN zstd declared=" + uncompressedSize
+                    + " repaired=" + repairedMagic
+                    + " peer=" + HexDump.peerOf(ctx), in);
+        }
+        ByteBuf payload = in.readRetainedSlice(in.readableBytes());
+        if (repairedMagic) {
+            try {
+                out.add(decompressRepaired(ctx, payload, uncompressedSize));
+            } finally {
+                payload.release();
+            }
+            return;
+        }
+        if (processor.isIdle() && uncompressedSize < ZstdAsyncPools.ASYNC_THRESHOLD) {
+            try {
+                out.add(decompressSync(ctx, payload, uncompressedSize));
+            } finally {
+                payload.release();
+            }
+        } else {
+            processor.add(ctx, new ZstdWork(ctx, processor, payload, uncompressedSize));
+        }
+    }
+
+    /**
+     * Decompresses a zstd frame whose first magic byte was zeroed by the old encoder bug
+     * ({@code 00 b5 2f fd ...}). The caller already validated the candidate via
+     * {@link #isRepairedZstdCandidate}; this performs the actual restore-and-decompress.
+     */
+    private static ByteBuf decompressRepaired(ChannelHandlerContext ctx, ByteBuf in, int size) {
+        ZstdDecompressCtx zctx = ZstdCodecCtx.decompress();
+        ByteBuf out = ctx.alloc().directBuffer(size);
+        ByteBuffer dst = out.nioBuffer(0, size);
+        try {
+            int len = in.readableBytes();
+            byte[] src = new byte[len];
+            in.getBytes(in.readerIndex(), src);
+            src[0] = ZSTD_MAGIC[0];
+            int n = zctx.decompressByteArrayToDirectByteBuffer(dst, 0, size, src, 0, len);
+            if (n < 0) {
+                String detail = describeFailure(in, size, "zstd restore decompression failed: " + n);
+                TraceDump.dump("client-decode", detail);
+                throw new IllegalStateException(detail);
+            }
+            out.writerIndex(n);
+            return out;
+        } catch (RuntimeException e) {
+            out.release();
+            String detail = describeFailure(in, size, e.toString());
+            TraceDump.dump("client-decode", detail);
+            throw new IllegalStateException(detail, e);
+        }
     }
 
     @Override
@@ -246,11 +393,22 @@ public class ZstdDecoder extends ByteToMessageDecoder {
      * Inflates a zlib frame, falling back to passing the payload through unchanged when it turns
      * out not to be zlib at all. Some third-party servers and proxies write frames that omit the
      * {@code varint(size)} compression header entirely (a protocol violation vanilla never
-     * produces); in that case the bytes we consumed as the size prefix are really the first bytes
-     * of the packet (usually its packet id), so they are reassembled with the payload before it is
-     * forwarded — dropping them would shift every subsequent read and desync the decoder. Custom
-     * client patchers normally tolerate such peers; disconnecting on the first bad frame would
-     * make this mod unusable there. Logged once per connection.
+     * produces). Two variants exist and both are handled:
+     *
+     * <ul>
+     *   <li><b>Raw frames</b>: the bytes we consumed as the size prefix are really the first bytes
+     *       of the packet (usually its packet id). They are reassembled with the payload before it
+     *       is forwarded — dropping them would shift every subsequent read and desync the
+     *       decoder.</li>
+     *   <li><b>Compressed frames</b>: the bytes we consumed as the size prefix are really the start
+     *       of the zlib stream itself (typically the CMF byte {@code 0x78} of a {@code 78 9C}
+     *       header), so the payload alone can never inflate. The whole envelope is decompressed
+     *       and the resulting packet forwarded; handing the raw compressed bytes to the vanilla
+     *       decoder instead would be parsed as a garbage packet.</li>
+     * </ul>
+     *
+     * <p>Custom client patchers normally tolerate such peers; disconnecting on the first bad frame
+     * would make this mod unusable there. Logged once per connection.
      */
     private ByteBuf inflateOrPassThrough(
             ChannelHandlerContext ctx, byte[] header, byte[] input, int inputLen, int size) {
@@ -259,6 +417,22 @@ public class ZstdDecoder extends ByteToMessageDecoder {
         } catch (NotZlibException e) {
             if (!warnedRawFrame) {
                 warnedRawFrame = true;
+                // A header our decoder consumed as the size prefix can hide a whole compressed
+                // frame; recover the packet before treating the frame as an uncompressed one.
+                ByteBuf decompressed = tryInflateFullEnvelope(ctx, header, input, inputLen);
+                if (decompressed != null) {
+                    LOGGER.warn("Peer sent a frame without the compression size prefix "
+                            + "(non-vanilla server or proxy); the payload was compressed zlib, "
+                            + "decompressed the whole {}-byte envelope to the packet. {}",
+                            header.length + inputLen, e.getMessage());
+                    if (HexDump.isEnabled()) {
+                        HexDump.note("frame-in", "IN size-prefix-less zlib recovered: headerBytes="
+                                + header.length + " bytes=" + inputLen + " -> "
+                                + decompressed.readableBytes() + " uncompressed"
+                                + " declared=" + size + " peer=" + HexDump.peerOf(ctx));
+                    }
+                    return decompressed;
+                }
                 LOGGER.warn("Peer sent an uncompressed frame without the compression size prefix "
                         + "(non-vanilla server or proxy); restoring the misread {} prefix byte(s) so "
                         + "the packet stays intact. {}",
@@ -273,6 +447,50 @@ public class ZstdDecoder extends ByteToMessageDecoder {
             passthrough.writeBytes(header).writeBytes(input, 0, inputLen);
             return passthrough;
         }
+    }
+
+    /**
+     * Attempts to recover a frame by inflating the whole envelope (header bytes consumed as the
+     * size prefix plus the payload) as a single zlib stream. Returns a direct buffer with the
+     * decompressed packet, or {@code null} when the combined bytes do not form a complete zlib
+     * stream — the caller then keeps the raw pass-through behaviour. The zlib checksum makes a
+     * false positive practically impossible, so a packet that only <em>starts</em> with zlib-like
+     * bytes (e.g. a raw packet id {@code 0x78}) is not mistaken for a compressed frame.
+     */
+    private static ByteBuf tryInflateFullEnvelope(
+            ChannelHandlerContext ctx, byte[] header, byte[] input, int inputLen) {
+        int total = header.length + inputLen;
+        byte[] full = new byte[total];
+        System.arraycopy(header, 0, full, 0, header.length);
+        System.arraycopy(input, 0, full, header.length, inputLen);
+
+        Inflater inflater = INFLATER_THREAD_LOCAL.get();
+        inflater.reset();
+        inflater.setInput(full);
+        // zlib alone usually shrinks 4-10x; start small and grow only if the stream really inflates
+        // that far, so a short garbage frame cannot force a giant allocation.
+        int capacity = (int) Math.min(Math.max(256L, total * 4L), MAX_UNCOMPRESSED_SIZE);
+        byte[] dst = new byte[capacity];
+        int written = 0;
+        try {
+            while (!inflater.finished() && !inflater.needsInput()) {
+                if (written == dst.length) {
+                    if (dst.length >= MAX_UNCOMPRESSED_SIZE) {
+                        return null;
+                    }
+                    dst = Arrays.copyOf(dst,
+                            (int) Math.min(dst.length * 2L, MAX_UNCOMPRESSED_SIZE));
+                }
+                written += inflater.inflate(dst, written, dst.length - written);
+            }
+        } catch (DataFormatException e) {
+            return null;
+        }
+        if (!inflater.finished() || written == 0 || inflater.getRemaining() != 0) {
+            // Truncated stream or trailing bytes: not a single complete zlib frame.
+            return null;
+        }
+        return ctx.alloc().directBuffer(written).writeBytes(dst, 0, written);
     }
 
     /** Marks frames whose payload is not a zlib stream at all (non-vanilla raw-frame peers). */

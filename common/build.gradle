@@ -13,6 +13,7 @@ dependencies {
     compileOnly "org.slf4j:slf4j-api:${project.slf4j_version}"
 
     testImplementation "io.netty:netty-all:4.2.18.Final"
+    testImplementation "org.slf4j:slf4j-api:${project.slf4j_version}"
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }

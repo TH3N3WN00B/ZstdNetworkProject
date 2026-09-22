@@ -45,6 +45,8 @@ public final class ZstdSettings {
     private List<String> autoDisableMods = DEFAULT_AUTO_DISABLE_MODS;
     private boolean hexDump;
     private boolean useVirtualThreads = true;
+    private long rateLimitBytesPerSecond;
+    private long rateLimitBurstBytes;
 
     public int getCompressionLevel() {
         return compressionLevel;
@@ -210,6 +212,31 @@ public final class ZstdSettings {
 
     public void setUseVirtualThreads(boolean useVirtualThreads) {
         this.useVirtualThreads = useVirtualThreads;
+    }
+
+    /**
+     * Maximum uncompressed bytes a single connection may make the decoder commit per second,
+     * charged against a per-channel token bucket (see {@link ChannelRateLimiter}).
+     * {@code 0} (the default) disables inbound rate limiting entirely.
+     */
+    public long getRateLimitBytesPerSecond() {
+        return rateLimitBytesPerSecond;
+    }
+
+    public void setRateLimitBytesPerSecond(long rateLimitBytesPerSecond) {
+        this.rateLimitBytesPerSecond = Math.max(0, rateLimitBytesPerSecond);
+    }
+
+    /**
+     * Token-bucket burst capacity in bytes. {@code 0} (the default) means two seconds' worth of
+     * the configured rate. Ignored while {@code rate-limit-bytes-per-second} is {@code 0}.
+     */
+    public long getRateLimitBurstBytes() {
+        return rateLimitBurstBytes;
+    }
+
+    public void setRateLimitBurstBytes(long rateLimitBurstBytes) {
+        this.rateLimitBurstBytes = Math.max(0, rateLimitBurstBytes);
     }
 
     /**

@@ -1,7 +1,7 @@
 // Enforce Netty 4.2.18 for protocol compatibility (all modules)
 ext {
     nettyVersion = '4.2.18'
-    velocityVersion = '4.2.0' // Stable, requires JVM 25+, targets Java 21 bytecode
+    velocityVersion = '4.2.1-SNAPSHOT' // Requires JVM 25+, targets Java 21 bytecode
     // Minecraft era: 1.21.x is obfuscated (yarn remap via loom-remap), 26.x is
     // unobfuscated (plain loom). Derived from the -Pminecraft_version group value
     // so fabric can pick its plugin at apply time. Mirrors neoforge.build.gradle.

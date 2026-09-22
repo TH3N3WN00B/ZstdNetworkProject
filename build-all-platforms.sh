@@ -7,8 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Default versions
-MOD_VERSION="${MOD_VERSION:-0.3.0}"
-BUILD_VERSION="${BUILD_VERSION:-beta-0.3.0}"
+MOD_VERSION="${MOD_VERSION:-0.3.1}"
+BUILD_VERSION="${BUILD_VERSION:-beta-0.3.1}"
 JAVA_HOME="${JAVA_HOME:-C:\Program Files\Eclipse Adoptium\jdk-27}"
 
 echo "=============================================="
