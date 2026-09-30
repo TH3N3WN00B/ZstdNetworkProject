@@ -3,7 +3,7 @@
 Compresión de paquetes **zstd (Zstandard)** para Minecraft en lugar del zlib de vanilla:
 **mismo ratio con ~7–12× menos CPU**, retrocompatible con clientes y servidores vanilla.
 
-**Versión** beta-0.3.1 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
+**Versión** beta-0.3.2 · **Licencia** AGPL-3.0-or-later · **Autores** Rigorberto & Bick Pickle (OpenCode)
 
 ## Qué ofrece
 
@@ -37,10 +37,10 @@ detecta la cabecera y acepta zstd o zlib indistintamente.
 \* Paper solo en las versiones con build disponible: 1.21.4, 1.21.5, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2
 y 26.3. Para 26.3 Paper aún no publica builds estables (solo alpha), y NeoForge/Fabric usan sus builds beta.
 
-Artefactos: `zstd-neoforge-beta-0.3.1-mc<version>.jar`, `zstd-fabric-beta-0.3.1-mc<version>.jar`,
-`zstd-paper-beta-0.3.1-mc<version>.jar`, `zstd-common-beta-0.3.1-mc<version>.jar` (esquema
+Artefactos: `zstd-neoforge-beta-0.3.2-mc<version>.jar`, `zstd-fabric-beta-0.3.2-mc<version>.jar`,
+`zstd-paper-beta-0.3.2-mc<version>.jar`, `zstd-common-beta-0.3.2-mc<version>.jar` (esquema
 `zstd-<plataforma>-<mod-version>-mc<mc-version>` para plataformas MC) y
-`zstd-velocity-beta-0.3.1-4.2.1-SNAPSHOT.jar` (Velocity se compila una única vez y su jar lleva la
+`zstd-velocity-beta-0.3.2-4.2.1-SNAPSHOT.jar` (Velocity se compila una única vez y su jar lleva la
 versión de la Velocity API contra la que se compiló, `-<velocity-version>`, en lugar de una versión
 de MC). En `dist/` tras compilar.
 

@@ -7,11 +7,11 @@ ext {
     minecraftEra = (findProperty('minecraft_version') ?: '26.2').toString().startsWith('26.') ? 'unobfuscated' : 'obfuscated'
 }
 
-// Force Gradle to use JVM 27 for everything (dependency resolution + compilation)
+// Use Java 21 for compilation (Minecraft 1.21.x era) or Java 25 for 26.x era
 gradle.projectsEvaluated {
     tasks.withType(JavaCompile).configureEach {
         javaCompiler = javaToolchains.compilerFor {
-            languageVersion = JavaLanguageVersion.of(27)
+            languageVersion = JavaLanguageVersion.of(21)
         }
         options.encoding = "UTF-8"
         options.release = (project.findProperty("${project.name}_java_version") ?: 21).toString()
@@ -19,7 +19,7 @@ gradle.projectsEvaluated {
     
     tasks.withType(Test).configureEach {
         javaLauncher = javaToolchains.launcherFor {
-            languageVersion = JavaLanguageVersion.of(27)
+            languageVersion = JavaLanguageVersion.of(21)
         }
     }
 }
@@ -28,23 +28,6 @@ repositories {
     mavenCentral()
     maven { name = 'papermc'; url = 'https://repo.papermc.io/repository/maven-public/' }
     maven { name = 'velocity'; url = 'https://maven.fabricmc.net/' }
-}
-
-// Force Gradle to use JVM 27 for everything
-gradle.projectsEvaluated {
-    tasks.withType(JavaCompile).configureEach {
-        javaCompiler = javaToolchains.compilerFor {
-            languageVersion = JavaLanguageVersion.of(27)
-        }
-        options.encoding = "UTF-8"
-        options.release = (project.findProperty("${project.name}_java_version") ?: 21).toString()
-    }
-    
-    tasks.withType(Test).configureEach {
-        javaLauncher = javaToolchains.launcherFor {
-            languageVersion = JavaLanguageVersion.of(27)
-        }
-    }
 }
 
 subprojects {
@@ -80,7 +63,7 @@ subprojects {
     if (project.name == 'velocity') {
         dependencies {
             implementation "com.velocitypowered:velocity-api:${rootProject.velocity_version}"
-            testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+            testImplementation 'org.junit.jupiter:junit-jupiter:6.1.3'
         }
     }
 }

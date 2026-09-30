@@ -12,7 +12,7 @@ repositories {
 configurations.all {
     resolutionStrategy {
         force 'com.google.code.gson:gson:2.14.0'
-        force 'com.google.guava:guava:33.7.1-jre'
+        force 'com.google.guava:guava:33.7.2-jre'
         force 'org.slf4j:slf4j-api:2.1.0-alpha1'
         force 'org.checkerframework:checker-qual:4.2.3'
         force 'com.google.errorprone:error_prone_annotations:2.50.0'
@@ -23,7 +23,7 @@ configurations.all {
 dependencies {
     implementation project(':common')
     implementation "com.github.luben:zstd-jni:${project.zstd_version}"
-    compileOnly "io.netty:netty-all:4.2.18.Final"
+    compileOnly "io.netty:netty-all:${project.netty_version}"
     compileOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
     runtimeOnly "com.velocitypowered:velocity-api:${project.velocity_version}"
 }
