@@ -18,6 +18,7 @@ import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
 import com.velocitypowered.api.event.connection.PreLoginEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.InboundConnection;
@@ -157,18 +158,33 @@ public class ZstdNetworkProjectVelocity {
         if (!(connection instanceof LoginPhaseConnection login)) {
             return;
         }
+        // Login plugin messages only exist since Minecraft 1.13 (protocol 393). Velocity throws
+        // IllegalStateException when asked to send them to older clients (1.8-1.12), which would
+        // otherwise surface as a failed PreLoginEvent handler. Skip the zstd handshake for those
+        // connections — they stay on vanilla zlib either way.
+        if (login.getProtocolVersion().getProtocol() < ProtocolVersion.MINECRAFT_1_13.getProtocol()) {
+            return;
+        }
         String username = event.getUsername();
         // Fresh login attempt: drop any stale capability entry from an earlier attempt that never
         // reached post-login (e.g. failed auth), so the map cannot grow with dead usernames.
         zstdCapable.remove(username);
         zstdClientLevels.remove(username);
         pruneDeadEntries(username);
-        login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
-                ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
-                response -> {
-                    zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response));
-                    zstdClientLevels.put(username, ZstdNegotiation.extractCompressionLevel(response, -1));
-                });
+        // Guard against clients that disconnect during PreLoginEvent (abrupt disconnects,
+        // slow connections, auth failures). Velocity may still try to send plugin messages
+        // to connections that are already closed, which throws IllegalStateException.
+        try {
+            login.sendLoginPluginMessage(CAPABILITY_CHANNEL,
+                    ZstdNegotiation.queryPayload(settings.effectiveCompressionLevel()),
+                    response -> {
+                        zstdCapable.put(username, ZstdNegotiation.isSupportedResponse(response));
+                        zstdClientLevels.put(username, ZstdNegotiation.extractCompressionLevel(response, -1));
+                    });
+        } catch (IllegalStateException e) {
+            // Connection already closed or invalid. Drop silently — the connection is already
+            // doomed (disconnected, failed auth, or timed out).
+        }
     }
 
     /**
